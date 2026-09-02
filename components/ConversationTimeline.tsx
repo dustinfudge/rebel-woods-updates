@@ -312,7 +312,7 @@ export function ConversationTimeline({ conversationId, currentUserId, horseId, h
       })}
     </div>
     <form className="border-t border-[#dedfd8] p-4" onSubmit={(event) => void sendMessage(event)}>
-      {selectedMedia.length > 0 ? <ul className="mb-3 space-y-2" aria-label="Selected attachments">{selectedMedia.map((file) => <li className="flex items-center justify-between rounded-xl bg-[#e4ece4] px-3 py-2 text-xs" key={`${file.name}-${file.lastModified}`}><span className="truncate pr-3">{file.name}</span><button aria-label={`Remove ${file.name}`} onClick={() => setSelectedMedia((currentMedia) => currentMedia.filter((item) => item !== file))} type="button"><X size={16} /></button></li>)}</ul> : null}
+      {selectedMedia.length > 0 ? <ul className="mb-3 flex gap-2 overflow-x-auto pb-1" aria-label="Selected attachments">{selectedMedia.map((file) => <SelectedMediaPreview file={file} key={`${file.name}-${file.lastModified}`} onRemove={() => setSelectedMedia((currentMedia) => currentMedia.filter((item) => item !== file))} />)}</ul> : null}
       {progressMessage ? <p className="mb-3 rounded-xl bg-[#e4ece4] p-3 text-xs font-semibold text-[#385943]" role="status">{progressMessage}</p> : null}
       <label className="sr-only" htmlFor="conversation-message">Write a message</label>
       <textarea className="mb-3 min-h-20 w-full resize-y rounded-2xl border border-[#cfd4ce] bg-white px-4 py-3 text-sm outline-none focus:border-[#385943]" id="conversation-message" maxLength={4000} onChange={(event) => setDraft(event.target.value)} placeholder={`Share an update or message about ${horseName}…`} value={draft} />
@@ -329,5 +329,18 @@ export function ConversationTimeline({ conversationId, currentUserId, horseId, h
 
 function ConversationMediaGallery({ horseName, links }: { readonly horseName: string; readonly links: readonly ConversationMediaLink[] }): React.JSX.Element | null {
   if (links.length === 0) return null;
-  return <div className={`grid gap-1.5 px-2 pb-2 ${links.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>{links.map((link, index) => <figure className="relative overflow-hidden rounded-xl bg-black/10" key={link.media.id}>{link.media.media_type === "video" ? <video className="aspect-[4/3] w-full object-cover" controls playsInline preload="metadata" src={link.viewUrl} /> : <a href={link.viewUrl} rel="noreferrer" target="_blank"><Image alt={`${horseName} photo ${index + 1}`} className="aspect-[4/3] w-full object-cover" decoding="async" height={600} loading="lazy" src={link.viewUrl} unoptimized width={800} /></a>}<a aria-label={`Download ${link.media.original_filename}`} className="absolute bottom-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-white/90 text-[#1d3528] shadow" download href={link.downloadUrl}><Download size={15} /></a></figure>)}</div>;
+  return <div className={`grid max-w-full gap-1.5 p-2 ${links.length > 1 ? "w-64 grid-cols-2 sm:w-72" : "w-44 grid-cols-1 sm:w-52"}`}>{links.map((link, index) => <figure className="relative overflow-hidden rounded-xl bg-black/10" key={link.media.id}>{link.media.media_type === "video" ? <video className="aspect-[4/3] w-full object-cover" controls playsInline preload="metadata" src={link.viewUrl} /> : <a href={link.viewUrl} rel="noreferrer" target="_blank"><Image alt={`${horseName} photo ${index + 1}`} className="aspect-[4/3] w-full object-cover" decoding="async" height={300} loading="lazy" src={link.viewUrl} unoptimized width={400} /></a>}<a aria-label={`Download ${link.media.original_filename}`} className="absolute bottom-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-white/90 text-[#1d3528] shadow" download href={link.downloadUrl}><Download size={15} /></a></figure>)}</div>;
+}
+
+function SelectedMediaPreview({ file, onRemove }: { readonly file: File; readonly onRemove: () => void }): React.JSX.Element {
+  const previewUrl = useMemo(() => URL.createObjectURL(file), [file]);
+
+  useEffect(() => (): void => URL.revokeObjectURL(previewUrl), [previewUrl]);
+
+  const isVideo = file.type.startsWith("video/");
+  return <li className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-[#cfd4ce] bg-[#e4ece4] shadow-sm">
+    {isVideo ? <video aria-label={`Preview of ${file.name}`} className="h-full w-full object-cover" muted playsInline preload="metadata" src={previewUrl} /> : <Image alt={`Preview of ${file.name}`} className="h-full w-full object-cover" height={160} src={previewUrl} unoptimized width={160} />}
+    {isVideo ? <span className="absolute bottom-1 left-1 rounded bg-black/65 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">Video</span> : null}
+    <button aria-label={`Remove ${file.name}`} className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full bg-white/95 text-[#1d3528] shadow" onClick={onRemove} type="button"><X size={14} /></button>
+  </li>;
 }

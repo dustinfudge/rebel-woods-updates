@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertCircle, ArrowLeft, Bell, LogOut, MapPin, MessageCircle, Pill, Settings, ShieldAlert } from "lucide-react";
+import type { RealtimePostgresInsertPayload } from "@supabase/supabase-js";
+import { AlertCircle, ArrowLeft, Bell, LogOut, MessageCircle, Pill, Settings, ShieldAlert } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -9,6 +10,7 @@ import { ChatWindow, type ChatParticipant } from "@/components/ChatWindow";
 import { UpdateComposer, type WeeklyUpdateDraft } from "@/components/UpdateComposer";
 import { getPagesBasePath } from "@/lib/environment";
 import { readVideoDurationSeconds } from "@/lib/media";
+import { getHorseNotificationCounts } from "@/lib/notifications";
 import { getPreviousWeekStartIsoDate, getWeeklyUpdateStatus, getWeekStartIsoDate, type WeeklyUpdateStatus } from "@/lib/week";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import type { Tables } from "@/types/supabase";
@@ -48,7 +50,8 @@ interface HorseDashboardItem {
   readonly currentUpdate: WeeklyUpdate | null;
   readonly latestPublishedUpdate: WeeklyUpdate | null;
   readonly status: WeeklyUpdateStatus;
-  readonly unreadCount: number;
+  readonly unreadReplyCount: number;
+  readonly unreadAlertCount: number;
   readonly owners: readonly Profile[];
 }
 
@@ -74,7 +77,7 @@ type UpdateFilter = "all" | "attention" | "updated";
 const emptyWorkspaceData: WorkspaceData = { horses: [], fields: [], herds: [], careProfiles: [], medications: [], horseAccess: [], weeklyUpdates: [], profiles: [], notifications: [] };
 const primaryButton = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#1d3528] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButton = "inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#cfd4ce] bg-white px-4 py-2 text-sm font-bold text-[#385943] disabled:opacity-50";
-const selectInput = "min-h-11 rounded-xl border border-[#cfd4ce] bg-white px-3 text-sm font-semibold text-[#385943] outline-none focus:border-[#385943]";
+const selectInput = "min-w-0 min-h-10 rounded-lg border border-[#cfd4ce] bg-white px-2 text-xs font-semibold text-[#385943] outline-none focus:border-[#385943] sm:min-h-11 sm:rounded-xl sm:px-3 sm:text-sm";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
@@ -191,6 +194,29 @@ export function AppWorkspace(): React.JSX.Element {
     return (): void => authSubscription.subscription.unsubscribe();
   }, [loadWorkspace, router]);
 
+  useEffect(() => {
+    if (!profile) return;
+
+    const client = getSupabaseBrowserClient();
+    const notificationsChannel = client
+      .channel(`workspace-notifications:${profile.id}`)
+      .on<Notification>(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${profile.id}` },
+        (payload: RealtimePostgresInsertPayload<Notification>): void => {
+          if (payload.new.read_at !== null) return;
+          setWorkspaceData((currentData) => currentData.notifications.some((notification) => notification.id === payload.new.id)
+            ? currentData
+            : { ...currentData, notifications: [payload.new, ...currentData.notifications] });
+        },
+      )
+      .subscribe();
+
+    return (): void => {
+      void client.removeChannel(notificationsChannel);
+    };
+  }, [profile]);
+
   const horseItems = useMemo<readonly HorseDashboardItem[]>(() => {
     const today = new Date();
     const currentWeekStart = getWeekStartIsoDate(today);
@@ -201,6 +227,7 @@ export function AppWorkspace(): React.JSX.Element {
     const profileById = new Map(workspaceData.profiles.map((person) => [person.id, person]));
     return workspaceData.horses.map((horse) => {
       const updates = workspaceData.weeklyUpdates.filter((update) => update.horse_id === horse.id);
+      const notificationCounts = getHorseNotificationCounts(workspaceData.notifications, horse.id);
       const currentUpdate = updates.find((update) => update.week_start === currentWeekStart) ?? null;
       const hasCurrentPublishedUpdate = currentUpdate !== null && currentUpdate.published_at !== null;
       const hasPreviousPublishedUpdate = updates.some((update) => update.week_start === previousWeekStart && update.published_at !== null);
@@ -215,7 +242,8 @@ export function AppWorkspace(): React.JSX.Element {
         currentUpdate,
         latestPublishedUpdate: updates.find((update) => update.published_at !== null) ?? null,
         status: getWeeklyUpdateStatus(hasCurrentPublishedUpdate, hasPreviousPublishedUpdate, today),
-        unreadCount: workspaceData.notifications.filter((notification) => notification.horse_id === horse.id).length,
+        unreadReplyCount: notificationCounts.replyCount,
+        unreadAlertCount: notificationCounts.otherCount,
         owners: workspaceData.horseAccess
           .filter((access) => access.horse_id === horse.id)
           .flatMap((access) => {
@@ -403,21 +431,21 @@ function Dashboard({ fieldFilter, fields, filteredHorses, herdFilter, herds, hor
   const updatedCount = horses.length - attentionCount;
 
   return <>
-    <section className="mb-7 overflow-hidden rounded-[2rem] bg-[#1d3528] p-7 text-white shadow-xl sm:p-9">
-      <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]">{isStaff ? "Stable overview" : "Your horses"}</p>
-      <div className="grid gap-6 md:grid-cols-[1fr_auto] md:items-end">
-        <div><h1 className="mb-3 max-w-2xl font-serif text-4xl leading-tight sm:text-5xl">Welcome, {profile.full_name.split(" ")[0]}.</h1><p className="mb-0 max-w-2xl leading-7 text-[#cdd9cf]">{isStaff ? "Horses needing attention appear first. Open a card to review care details or send this week’s update." : "Open a horse to see care information, weekly photos and videos, and private replies."}</p></div>
-        {isStaff ? <div className="grid grid-cols-2 gap-3"><div className="rounded-2xl bg-white/10 px-5 py-4"><strong className="block text-3xl">{attentionCount}</strong><small className="text-[#cdd9cf]">need attention</small></div><div className="rounded-2xl bg-white/10 px-5 py-4"><strong className="block text-3xl">{updatedCount}</strong><small className="text-[#cdd9cf]">updated</small></div></div> : null}
+    <section className="mb-4 overflow-hidden rounded-2xl bg-[#1d3528] p-5 text-white shadow-xl sm:mb-7 sm:rounded-[2rem] sm:p-9">
+      <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#d9a27b] sm:mb-2 sm:text-xs">{isStaff ? "Stable overview" : "Your horses"}</p>
+      <div className="grid gap-3 sm:gap-6 md:grid-cols-[1fr_auto] md:items-end">
+        <div><h1 className="mb-0 max-w-2xl font-serif text-3xl leading-tight sm:mb-3 sm:text-5xl">Welcome, {profile.full_name.split(" ")[0]}.</h1><p className="mb-0 hidden max-w-2xl leading-7 text-[#cdd9cf] sm:block">{isStaff ? "Horses needing attention appear first. Open a card to review care details or send this week’s update." : "Open a horse to see care information, weekly photos and videos, and private replies."}</p></div>
+        {isStaff ? <div className="grid grid-cols-2 gap-2 sm:gap-3"><div className="rounded-xl bg-white/10 px-3 py-2 sm:rounded-2xl sm:px-5 sm:py-4"><strong className="mr-1 text-2xl sm:block sm:text-3xl">{attentionCount}</strong><small className="text-[#cdd9cf]">need attention</small></div><div className="rounded-xl bg-white/10 px-3 py-2 sm:rounded-2xl sm:px-5 sm:py-4"><strong className="mr-1 text-2xl sm:block sm:text-3xl">{updatedCount}</strong><small className="text-[#cdd9cf]">updated</small></div></div> : null}
       </div>
     </section>
 
-    {isStaff ? <section className="mb-6 flex flex-wrap gap-3 rounded-2xl border border-[#dedfd8] bg-[#fffdf8] p-4" aria-label="Horse filters">
+    {isStaff ? <section className="mb-4 grid grid-cols-3 gap-2 rounded-xl border border-[#dedfd8] bg-[#fffdf8] p-2 sm:mb-6 sm:flex sm:flex-wrap sm:gap-3 sm:rounded-2xl sm:p-4" aria-label="Horse filters">
       <select aria-label="Filter by update status" className={selectInput} onChange={(event) => onUpdateFilter(event.target.value as UpdateFilter)} value={updateFilter}><option value="all">All updates</option><option value="attention">Needs attention</option><option value="updated">Updated</option></select>
       <select aria-label="Filter by field" className={selectInput} onChange={(event) => onFieldFilter(event.target.value)} value={fieldFilter}><option value="">All fields</option>{fields.map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select>
       <select aria-label="Filter by herd" className={selectInput} onChange={(event) => onHerdFilter(event.target.value)} value={herdFilter}><option value="">All herds</option>{herds.map((herd) => <option key={herd.id} value={herd.id}>{herd.name}</option>)}</select>
     </section> : null}
 
-    {filteredHorses.length > 0 ? <section className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3" aria-label="Horses">{filteredHorses.map((item) => <HorseCard item={item} key={item.horse.id} onOpen={() => onOpenHorse(item.horse.id)} />)}</section> : <section className="rounded-3xl border border-dashed border-[#bfc6bf] bg-[#fffdf8] p-10 text-center"><h2 className="mb-2 font-serif text-3xl">No horses to show</h2><p className="mb-0 text-[#68736b]">{horses.length === 0 ? "An administrator can add the first horse in Setup." : "Try clearing one of the filters."}</p></section>}
+    {filteredHorses.length > 0 ? <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4" aria-label="Horses">{filteredHorses.map((item) => <HorseCard item={item} key={item.horse.id} onOpen={() => onOpenHorse(item.horse.id)} />)}</section> : <section className="rounded-3xl border border-dashed border-[#bfc6bf] bg-[#fffdf8] p-10 text-center"><h2 className="mb-2 font-serif text-3xl">No horses to show</h2><p className="mb-0 text-[#68736b]">{horses.length === 0 ? "An administrator can add the first horse in Setup." : "Try clearing one of the filters."}</p></section>}
   </>;
 }
 
@@ -429,14 +457,18 @@ interface HorseCardProps {
 function HorseCard({ item, onOpen }: HorseCardProps): React.JSX.Element {
   const status = statusPresentation(item.status);
   const hasSpecialRequirements = Boolean(item.careProfile?.special_requirements.trim());
-  return <button className="group overflow-hidden rounded-[1.75rem] border border-[#dedfd8] bg-[#fffdf8] text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[#385943]" onClick={onOpen} type="button">
-    <div className="relative aspect-[4/3] overflow-hidden bg-[#dfe5df]">
-      {item.thumbnailUrl ? <Image alt={`${item.horse.name} thumbnail`} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" height={600} src={item.thumbnailUrl} unoptimized width={800} /> : <div className="grid h-full place-items-center font-serif text-6xl text-[#789080]">{item.horse.name.slice(0, 1).toUpperCase()}</div>}
-      <span className={`absolute left-3 top-3 rounded-full px-3 py-1 text-xs font-bold ${status.className}`}>{status.label}</span>
-      {item.unreadCount > 0 ? <span className="absolute right-3 top-3 inline-flex min-h-7 min-w-7 items-center justify-center rounded-full bg-[#a65333] px-2 text-xs font-bold text-white"><Bell size={13} className="mr-1" />{item.unreadCount}</span> : null}
+  return <button className="group overflow-hidden rounded-2xl border border-[#dedfd8] bg-[#fffdf8] text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[#385943] sm:rounded-[1.75rem]" onClick={onOpen} type="button">
+    <div className="relative aspect-[5/4] overflow-hidden bg-[#dfe5df] sm:aspect-[4/3]">
+      {item.thumbnailUrl ? <Image alt={`${item.horse.name} thumbnail`} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" height={600} src={item.thumbnailUrl} unoptimized width={800} /> : <div className="grid h-full place-items-center font-serif text-4xl text-[#789080] sm:text-6xl">{item.horse.name.slice(0, 1).toUpperCase()}</div>}
+      <span className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[10px] font-bold shadow-sm sm:bottom-auto sm:left-3 sm:top-3 sm:px-3 sm:text-xs ${status.className}`}>{status.label}</span>
+      {item.unreadReplyCount > 0 ? <span aria-label={`${item.unreadReplyCount} unread ${item.unreadReplyCount === 1 ? "reply" : "replies"}`} className="absolute right-2 top-2 inline-flex min-h-7 items-center justify-center gap-1 rounded-full bg-[#a65333] px-2 text-[10px] font-extrabold text-white shadow-lg ring-2 ring-white"><MessageCircle aria-hidden="true" size={13} />{item.unreadReplyCount === 1 ? "New reply" : `${item.unreadReplyCount} replies`}</span> : item.unreadAlertCount > 0 ? <span aria-label={`${item.unreadAlertCount} unread care ${item.unreadAlertCount === 1 ? "alert" : "alerts"}`} className="absolute right-2 top-2 inline-flex min-h-7 min-w-7 items-center justify-center rounded-full bg-[#f6e8c9] px-2 text-[10px] font-extrabold text-[#75520e] shadow-lg ring-2 ring-white"><Bell aria-hidden="true" className="mr-1" size={13} />{item.unreadAlertCount}</span> : null}
     </div>
-    <span className="block p-5"><strong className="mb-2 block font-serif text-3xl">{item.horse.name}</strong><span className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[#68736b]"><span className="inline-flex items-center gap-1"><MapPin size={14} />{item.fieldName}</span><span>{item.herdName} herd</span></span>{hasSpecialRequirements ? <span className="mt-4 flex items-center gap-2 rounded-xl border-2 border-[#a65333] bg-[#f3ded3] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-[#73391f]"><ShieldAlert aria-hidden="true" size={20} />Special requirements</span> : null}{item.activeMedications.length > 0 ? <span className="mt-2 flex items-center gap-2 rounded-xl bg-[#f6e8c9] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-[#75520e]"><Pill aria-hidden="true" size={18} />Current medication</span> : null}</span>
+    <span className="block p-3 sm:p-5"><strong className="mb-2 block truncate font-serif text-xl sm:text-3xl">{item.horse.name}</strong><span className="grid grid-cols-2 gap-1.5"><HorseLocationBox label="Field" value={item.fieldName} /><HorseLocationBox label="Herd" value={item.herdName} /></span>{hasSpecialRequirements ? <span className="mt-2 flex items-center gap-1.5 rounded-lg border-2 border-[#a65333] bg-[#f3ded3] px-2 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.06em] text-[#73391f] sm:mt-4 sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2 sm:text-xs"><ShieldAlert aria-hidden="true" size={16} /><span className="sm:hidden">Special</span><span className="hidden sm:inline">Special requirements</span></span> : null}{item.activeMedications.length > 0 ? <span className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-[#f6e8c9] px-2 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.06em] text-[#75520e] sm:mt-2 sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2 sm:text-xs"><Pill aria-hidden="true" size={15} /><span className="sm:hidden">Medication</span><span className="hidden sm:inline">Current medication</span></span> : null}</span>
   </button>;
+}
+
+function HorseLocationBox({ label, value }: { readonly label: "Field" | "Herd"; readonly value: string }): React.JSX.Element {
+  return <span className="min-w-0 rounded-lg border border-[#d8ddd7] bg-[#f3f6f2] px-2 py-1.5"><small className="mb-0.5 block text-[8px] font-extrabold uppercase tracking-[0.12em] text-[#68736b] sm:text-[9px]">{label}</small><span className="block truncate text-[11px] font-bold text-[#1d3528] sm:text-xs">{value}</span></span>;
 }
 
 interface HorseWorkspaceProps {

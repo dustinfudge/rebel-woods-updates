@@ -206,6 +206,109 @@ export type Database = {
         };
         Relationships: [];
       };
+      horse_conversations: {
+        Row: {
+          id: string;
+          organization_id: string;
+          horse_id: string;
+          last_message_at: string | null;
+          last_staff_communication_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          horse_id: string;
+          last_message_at?: string | null;
+          last_staff_communication_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          last_message_at?: string | null;
+          last_staff_communication_at?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      conversation_messages: {
+        Row: {
+          id: string;
+          conversation_id: string;
+          sender_id: string;
+          kind: Database["public"]["Enums"]["conversation_message_kind"];
+          body: string;
+          hidden_at: string | null;
+          hidden_by: string | null;
+          created_at: string;
+          edited_at: string | null;
+          legacy_update_id: string | null;
+          legacy_message_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          conversation_id: string;
+          sender_id: string;
+          kind?: Database["public"]["Enums"]["conversation_message_kind"];
+          body?: string;
+          hidden_at?: string | null;
+          hidden_by?: string | null;
+          created_at?: string;
+          edited_at?: string | null;
+          legacy_update_id?: string | null;
+          legacy_message_id?: string | null;
+        };
+        Update: {
+          body?: string;
+          hidden_at?: string | null;
+          hidden_by?: string | null;
+          edited_at?: string | null;
+        };
+        Relationships: [];
+      };
+      conversation_media: {
+        Row: {
+          id: string;
+          message_id: string;
+          uploaded_by: string;
+          storage_bucket: string;
+          storage_path: string;
+          media_type: Database["public"]["Enums"]["media_type"];
+          mime_type: string;
+          original_filename: string;
+          byte_size: number;
+          duration_seconds: number | null;
+          sort_order: number;
+          created_at: string;
+          legacy_update_media_id: string | null;
+          legacy_message_media_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          message_id: string;
+          uploaded_by: string;
+          storage_bucket: string;
+          storage_path: string;
+          media_type: Database["public"]["Enums"]["media_type"];
+          mime_type: string;
+          original_filename: string;
+          byte_size: number;
+          duration_seconds?: number | null;
+          sort_order?: number;
+          created_at?: string;
+          legacy_update_media_id?: string | null;
+          legacy_message_media_id?: string | null;
+        };
+        Update: { sort_order?: number };
+        Relationships: [];
+      };
+      conversation_message_reads: {
+        Row: { message_id: string; profile_id: string; read_at: string };
+        Insert: { message_id: string; profile_id: string; read_at?: string };
+        Update: { read_at?: string };
+        Relationships: [];
+      };
       weekly_updates: {
         Row: {
           id: string;
@@ -333,6 +436,7 @@ export type Database = {
           horse_id: string | null;
           update_id: string | null;
           message_id: string | null;
+          conversation_message_id: string | null;
           kind: Database["public"]["Enums"]["notification_kind"];
           title: string;
           body: string;
@@ -370,12 +474,15 @@ export type Database = {
     Views: Record<never, never>;
     Functions: {
       can_access_horse: { Args: { target_horse_id: string }; Returns: boolean };
+      can_access_conversation: { Args: { target_conversation_id: string }; Returns: boolean };
+      can_access_conversation_message: { Args: { target_message_id: string }; Returns: boolean };
       is_admin: { Args: Record<PropertyKey, never>; Returns: boolean };
       is_staff: { Args: Record<PropertyKey, never>; Returns: boolean };
       renotify_weekly_update: { Args: { target_update_id: string }; Returns: undefined };
     };
     Enums: {
       app_role: "admin" | "stable_hand" | "owner";
+      conversation_message_kind: "message" | "historical_update";
       horse_relationship: "primary_owner" | "family";
       media_type: "photo" | "video";
       medication_status: "active" | "completed" | "discontinued";

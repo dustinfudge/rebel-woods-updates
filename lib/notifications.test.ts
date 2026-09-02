@@ -12,6 +12,7 @@ function notification(overrides: Partial<Notification>): Notification {
     horse_id: "horse-1",
     update_id: "update-1",
     message_id: null,
+    conversation_message_id: null,
     kind: "care_change",
     title: "Care changed",
     body: "Review the care card.",

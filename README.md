@@ -1,22 +1,23 @@
-# Rebel Woods Weekly Care
+# Rebel Woods Horse Care
 
-A private, mobile-first Progressive Web App for weekly horse updates, care information, and update-specific conversations.
+A private, mobile-first Progressive Web App for horse care information and continuous horse-specific conversations.
 
 ## Product rules
 
 - Owners and authorized family members have equal access to their assigned horses.
-- Rebel Wranglers can see every horse, publish weekly updates, and reply to owners.
+- Rebel Wranglers can see every horse and communicate with owners and family members.
 - Only administrators can manage horses, users, feed, supplements, medications, fields, herds, and special requirements.
-- Weekly updates run Monday through Sunday and support up to 10 photos and three 60-second videos.
-- Replies belong to a weekly update. There is no general horse conversation.
-- Messages are immutable. Administrators may hide a message while its audit record remains intact.
+- Each horse has one continuous conversation supporting text, up to 10 photos, and three 60-second videos per message.
+- Every participant can see named read receipts. Staff dashboards show days since the last administrator or Rebel Wrangler message.
+- Conversation messages are immutable. Administrators may hide a message while its audit record remains intact.
+- Only administrators can change a horse’s field and herd.
 - Medication history remains available after a medication is completed or discontinued.
 
 ## Architecture
 
 ```text
 app/                         Static Next.js App Router pages
-components/                  Realtime chat, update capture, push, and PWA components
+components/                  Realtime conversation, care, setup, push, and PWA components
 lib/                         Typed Supabase client and domain rules
 pwa/                         Strict TypeScript service worker source
 public/                      PWA icons and generated service worker
@@ -44,7 +45,7 @@ pnpm build
 ## Supabase connection
 
 1. Create a Supabase project.
-2. Run `supabase/migrations/202608310001_initial_schema.sql` through the Supabase SQL editor or CLI.
+2. Run every file in `supabase/migrations/` in filename order through the Supabase SQL editor or CLI.
 3. Copy `.env.example` to `.env.local` and add the project URL and publishable key.
 4. Configure the Supabase Auth site URL and allowed redirect URL to match the final GitHub Pages address, including `/auth/callback/`.
 5. Regenerate `types/supabase.ts` after every schema migration:
@@ -65,4 +66,6 @@ In the repository Pages settings, select **GitHub Actions** as the publishing so
 
 ## Push delivery
 
-The app stores each opted-in device in `push_subscriptions`. Database triggers create notification records for weekly updates, replies, care changes, and medication changes. A Supabase Edge Function and database webhook must send those records using the private VAPID key; that private delivery step is configured when the Supabase project is connected.
+The app stores each opted-in device in `push_subscriptions`. Database triggers create notification records for conversation messages, care changes, and medication changes. A Supabase Edge Function and database webhook must send those records using the private VAPID key; that private delivery step is configured when the Supabase project is connected.
+
+Conversation retention is configured per organization. The cleanup function removes expired conversation messages and their storage objects while preserving care information, medication history, access, and last-staff-contact dates. Do not schedule the function until its deployment and a dry-run review are complete.

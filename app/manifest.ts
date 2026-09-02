@@ -6,9 +6,9 @@ export default function manifest(): MetadataRoute.Manifest {
   const basePath = process.env.PAGES_BASE_PATH ?? "";
 
   return {
-    name: "Rebel Woods Weekly Care",
+    name: "Rebel Woods Horse Care",
     short_name: "Rebel Woods",
-    description: "Private weekly horse care updates and conversations.",
+    description: "Private horse care information and continuous conversations.",
     start_url: `${basePath}/`,
     scope: `${basePath}/`,
     display: "standalone",

@@ -6,8 +6,8 @@ import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistratio
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Rebel Woods Weekly Care",
-  description: "Weekly horse care updates and conversations for the Rebel Woods family.",
+  title: "Rebel Woods Horse Care",
+  description: "Horse care information and private conversations for the Rebel Woods family.",
 };
 
 export const viewport: Viewport = {

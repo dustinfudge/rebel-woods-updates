@@ -112,7 +112,9 @@ function safeStorageFilename(filename: string): string {
 async function signedThumbnailUrls(horses: readonly Horse[]): Promise<Readonly<Record<string, string>>> {
   const client = getSupabaseBrowserClient();
   const results = await Promise.all(horses.flatMap((horse) => horse.photo_path
-    ? [client.storage.from("horse-thumbnails").createSignedUrl(horse.photo_path, 3600).then((result) => ({ path: horse.photo_path, signedUrl: result.data?.signedUrl ?? null }))]
+    ? [client.storage.from("horse-thumbnails").createSignedUrl(horse.photo_path, 3600, {
+        transform: { width: 720, height: 540, resize: "cover", quality: 75 },
+      }).then((result) => ({ path: horse.photo_path, signedUrl: result.data?.signedUrl ?? null }))]
     : []));
   return results.reduce<Record<string, string>>((urls, result) => {
     if (result.signedUrl && result.path) urls[result.path] = result.signedUrl;
@@ -137,7 +139,7 @@ export function AppWorkspace(): React.JSX.Element {
   const [publicationProgress, setPublicationProgress] = useState<string | null>(null);
   const [notice, setNotice] = useState<WorkspaceNotice | null>(null);
 
-  const loadWorkspace = useCallback(async (currentProfile: Profile): Promise<void> => {
+  const loadWorkspace = useCallback(async (currentProfile: Profile, refreshThumbnails = false): Promise<void> => {
     const client = getSupabaseBrowserClient();
     const [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, updatesResult, profilesResult, notificationsResult] = await Promise.all([
       client.from("horses").select("*").eq("is_active", true).order("name"),
@@ -164,7 +166,7 @@ export function AppWorkspace(): React.JSX.Element {
       profiles: profilesResult.data ?? [],
       notifications: notificationsResult.data ?? [],
     });
-    setThumbnailUrls(await signedThumbnailUrls(horses));
+    if (refreshThumbnails) setThumbnailUrls(await signedThumbnailUrls(horses));
   }, []);
 
   useEffect(() => {
@@ -180,7 +182,7 @@ export function AppWorkspace(): React.JSX.Element {
         if (profileError) throw profileError;
         if (!currentProfile?.is_active) throw new Error("This Rebel Woods account is not active.");
         setProfile(currentProfile);
-        await loadWorkspace(currentProfile);
+        await loadWorkspace(currentProfile, true);
       } catch (error: unknown) {
         setNotice({ tone: "error", message: errorMessage(error) });
       } finally {
@@ -313,9 +315,17 @@ export function AppWorkspace(): React.JSX.Element {
     setIsEditingUpdate(false);
     setNotice(null);
     if (!profile) return;
+    const unreadNotifications = workspaceData.notifications.filter((notification) => notification.horse_id === horseId);
+    setWorkspaceData((currentData) => ({
+      ...currentData,
+      notifications: currentData.notifications.filter((notification) => notification.horse_id !== horseId),
+    }));
     const client = getSupabaseBrowserClient();
     const { error } = await client.from("notifications").update({ read_at: new Date().toISOString() }).eq("user_id", profile.id).eq("horse_id", horseId).is("read_at", null);
-    if (!error) await loadWorkspace(profile);
+    if (error) {
+      setWorkspaceData((currentData) => ({ ...currentData, notifications: [...unreadNotifications, ...currentData.notifications] }));
+      setNotice({ tone: "error", message: "The notification could not be marked as read." });
+    }
   }
 
   async function uploadMedia(update: WeeklyUpdate, files: readonly File[]): Promise<void> {
@@ -459,7 +469,7 @@ function HorseCard({ item, onOpen }: HorseCardProps): React.JSX.Element {
   const hasSpecialRequirements = Boolean(item.careProfile?.special_requirements.trim());
   return <button className="group overflow-hidden rounded-2xl border border-[#dedfd8] bg-[#fffdf8] text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[#385943] sm:rounded-[1.75rem]" onClick={onOpen} type="button">
     <div className="relative aspect-[5/4] overflow-hidden bg-[#dfe5df] sm:aspect-[4/3]">
-      {item.thumbnailUrl ? <Image alt={`${item.horse.name} thumbnail`} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" height={600} src={item.thumbnailUrl} unoptimized width={800} /> : <div className="grid h-full place-items-center font-serif text-4xl text-[#789080] sm:text-6xl">{item.horse.name.slice(0, 1).toUpperCase()}</div>}
+      {item.thumbnailUrl ? <Image alt={`${item.horse.name} thumbnail`} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" decoding="async" height={540} loading="lazy" src={item.thumbnailUrl} unoptimized width={720} /> : <div className="grid h-full place-items-center font-serif text-4xl text-[#789080] sm:text-6xl">{item.horse.name.slice(0, 1).toUpperCase()}</div>}
       <span className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[10px] font-bold shadow-sm sm:bottom-auto sm:left-3 sm:top-3 sm:px-3 sm:text-xs ${status.className}`}>{status.label}</span>
       {item.unreadReplyCount > 0 ? <span aria-label={`${item.unreadReplyCount} unread ${item.unreadReplyCount === 1 ? "reply" : "replies"}`} className="absolute right-2 top-2 inline-flex min-h-7 items-center justify-center gap-1 rounded-full bg-[#1f5f8b] px-2 text-[10px] font-extrabold text-white shadow-lg ring-2 ring-white"><MessageCircle aria-hidden="true" size={13} />{item.unreadReplyCount === 1 ? "New reply" : `${item.unreadReplyCount} replies`}</span> : item.unreadAlertCount > 0 ? <span aria-label={`${item.unreadAlertCount} unread care ${item.unreadAlertCount === 1 ? "alert" : "alerts"}`} className="absolute right-2 top-2 inline-flex min-h-7 min-w-7 items-center justify-center rounded-full bg-[#f6e8c9] px-2 text-[10px] font-extrabold text-[#75520e] shadow-lg ring-2 ring-white"><Bell aria-hidden="true" className="mr-1" size={13} />{item.unreadAlertCount}</span> : null}
     </div>

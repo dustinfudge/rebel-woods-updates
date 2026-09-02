@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, ArrowRight, Check, LoaderCircle, LogOut, MapPin, Plus, ShieldCheck, Stethoscope, UsersRound } from "lucide-react";
+import { AlertCircle, ArrowRight, CalendarClock, Check, LoaderCircle, LogOut, MapPin, Plus, ShieldCheck, Stethoscope, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -9,6 +9,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import type { Database, Tables } from "@/types/supabase";
 
 type Profile = Tables<"profiles">;
+type Organization = Tables<"organizations">;
 type Field = Tables<"fields">;
 type Herd = Tables<"herds">;
 type Horse = Tables<"horses">;
@@ -21,6 +22,7 @@ type Section = "locations" | "horses" | "people";
 type HorseInformationUpdate = Pick<Database["public"]["Tables"]["horses"]["Update"], "horse_type" | "birth_year" | "veterinarian_name" | "veterinarian_phone" | "farrier_name" | "farrier_phone" | "deworming_schedule" | "vaccine_schedule">;
 
 interface SetupData {
+  organization: Organization | null;
   fields: readonly Field[];
   herds: readonly Herd[];
   horses: readonly Horse[];
@@ -43,7 +45,7 @@ interface Notice {
   message: string;
 }
 
-const emptyData: SetupData = { fields: [], herds: [], horses: [], care: [], profiles: [], access: [], medications: [] };
+const emptyData: SetupData = { organization: null, fields: [], herds: [], horses: [], care: [], profiles: [], access: [], medications: [] };
 const input = "min-h-12 w-full rounded-xl border border-[#cfd4ce] bg-white px-4 text-base outline-none focus:border-[#385943] focus:ring-2 focus:ring-[#385943]/10";
 const area = `${input} min-h-24 resize-y py-3 leading-6`;
 const primary = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#1d3528] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50";
@@ -105,7 +107,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
   const [accessDenied, setAccessDenied] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 
-  const loadData = useCallback(async (administrator: Profile): Promise<void> => {
+  const loadData = useCallback(async (administrator: Profile, refreshThumbnails = false): Promise<void> => {
     const client = getSupabaseBrowserClient();
     const results = await Promise.all([
       client.from("fields").select("*").eq("organization_id", administrator.organization_id).order("name"),
@@ -115,17 +117,23 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       client.from("profiles").select("*").eq("organization_id", administrator.organization_id).order("full_name"),
       client.from("horse_access").select("*").order("created_at"),
       client.from("horse_medications").select("*").order("starts_on", { ascending: false }),
+      client.from("organizations").select("*").eq("id", administrator.organization_id).single(),
     ]);
     const firstError = results.map((result) => result.error).find((error) => error !== null);
     if (firstError) throw firstError;
     const loadedHorses = results[2].data ?? [];
-    const thumbnailResults = await Promise.all(loadedHorses.flatMap((horse) => horse.photo_path ? [client.storage.from("horse-thumbnails").createSignedUrl(horse.photo_path, 3600).then((result) => ({ path: horse.photo_path, ...result }))] : []));
-    const signedThumbnailUrls = thumbnailResults.reduce<Record<string, string>>((urls, result) => {
-      if (result.path && result.data?.signedUrl) urls[result.path] = result.data.signedUrl;
-      return urls;
-    }, {});
-    setThumbnailUrls(signedThumbnailUrls);
+    if (refreshThumbnails) {
+      const thumbnailResults = await Promise.all(loadedHorses.flatMap((horse) => horse.photo_path ? [client.storage.from("horse-thumbnails").createSignedUrl(horse.photo_path, 3600, {
+        transform: { width: 720, height: 540, resize: "cover", quality: 75 },
+      }).then((result) => ({ path: horse.photo_path, ...result }))] : []));
+      const signedThumbnailUrls = thumbnailResults.reduce<Record<string, string>>((urls, result) => {
+        if (result.path && result.data?.signedUrl) urls[result.path] = result.data.signedUrl;
+        return urls;
+      }, {});
+      setThumbnailUrls(signedThumbnailUrls);
+    }
     setData({
+      organization: results[7].data,
       fields: results[0].data ?? [], herds: results[1].data ?? [], horses: loadedHorses,
       care: results[3].data ?? [], profiles: results[4].data ?? [], access: results[5].data ?? [],
       medications: results[6].data ?? [],
@@ -152,7 +160,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
           setAccessDenied(true);
           return;
         }
-        await loadData(currentProfile);
+        await loadData(currentProfile, true);
       } catch (error: unknown) {
         setAccessProblem(messageFrom(error));
       } finally {
@@ -185,9 +193,9 @@ export function AdminSetupWorkspace(): React.JSX.Element {
   const selectedHorse = horseViews.find((horse) => horse.id === selectedHorseId) ?? null;
   const progress = [data.fields.length > 0 && data.herds.length > 0, horses.length > 0, hasInvitedPerson].filter(Boolean).length;
 
-  async function refresh(successMessage: string): Promise<void> {
+  async function refresh(successMessage: string, refreshThumbnails = false): Promise<void> {
     if (!profile) return;
-    await loadData(profile);
+    await loadData(profile, refreshThumbnails);
     setNotice({ tone: "success", message: successMessage });
   }
 
@@ -279,7 +287,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
         const { error: photoPathError } = await client.from("horses").update({ photo_path: storagePath }).eq("id", selectedHorse.id);
         if (photoPathError) throw photoPathError;
       }
-      await refresh(`${selectedHorse.name}’s information card was updated.`);
+      await refresh(`${selectedHorse.name}’s information card was updated.`, thumbnail !== null);
     });
   }
 
@@ -350,6 +358,18 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     });
   }
 
+  async function updateRetention(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!profile) return;
+    const retentionDays = Number.parseInt(value(new FormData(event.currentTarget), "retentionDays"), 10);
+    if (![90, 180, 365, 730].includes(retentionDays)) return;
+    await mutate(async () => {
+      const { error } = await getSupabaseBrowserClient().from("organizations").update({ update_retention_days: retentionDays }).eq("id", profile.organization_id);
+      if (error) throw error;
+      await refresh(`Weekly updates will be kept for ${retentionDays} days.`);
+    });
+  }
+
   if (loading) return <div className="grid min-h-screen place-items-center bg-[#f7f3e9] text-[#385943]"><span className="flex items-center gap-3 font-bold"><LoaderCircle className="animate-spin" />Opening Rebel Woods…</span></div>;
   if (accessProblem) return <AccessProblem details={accessProblem} onRetry={() => setRetryCount((count) => count + 1)} onSignOut={() => void getSupabaseBrowserClient().auth.signOut()} />;
   if (accessDenied || !profile) return <AccessDenied onSignOut={() => void getSupabaseBrowserClient().auth.signOut()} />;
@@ -365,7 +385,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
           <Tab active={section === "horses"} complete={horses.length > 0} icon={<Stethoscope size={18} />} label="2. Horses & care" onClick={() => setSection("horses")} />
           <Tab active={section === "people"} complete={hasInvitedPerson} icon={<UsersRound size={18} />} label="3. People & access" onClick={() => setSection("people")} />
         </nav>
-        {section === "locations" ? <Locations fields={data.fields} herds={data.herds} saving={saving} onAdd={addLocation} onContinue={() => setSection("horses")} /> : null}
+        {section === "locations" ? <Locations fields={data.fields} herds={data.herds} retentionDays={data.organization?.update_retention_days ?? 180} saving={saving} onAdd={addLocation} onContinue={() => setSection("horses")} onUpdateRetention={updateRetention} /> : null}
         {section === "horses" ? <Horses access={data.access} fields={data.fields} herds={data.herds} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddMedication={addMedication} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
         {section === "people" ? <People access={data.access} horses={horses} owners={owners} profiles={data.profiles} saving={saving} onGrant={grantAccess} onInvite={invite} onUpdatePhone={updatePersonPhone} /> : null}
       </div>
@@ -409,8 +429,8 @@ function Empty({ children }: { readonly children: React.ReactNode }): React.JSX.
   return <div className="rounded-2xl border border-dashed border-[#cfd4ce] bg-[#f7f3e9] p-5 text-center text-sm text-[#68736b]">{children}</div>;
 }
 
-function Locations({ fields, herds, saving, onAdd, onContinue }: { readonly fields: readonly Field[]; readonly herds: readonly Herd[]; readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>, kind: "field" | "herd") => Promise<void>; readonly onContinue: () => void }): React.JSX.Element {
-  return <section><Intro step="Step one" title="Where do the horses live?">Add the field and herd names your team already uses. You can add more later.</Intro><div className="grid gap-5 md:grid-cols-2"><LocationCard title="Fields" example="North Field, Creek Field" items={fields} saving={saving} onSubmit={(event) => onAdd(event, "field")} /><LocationCard title="Herds" example="Willow Herd, Oak Herd" items={herds} saving={saving} onSubmit={(event) => onAdd(event, "herd")} /></div><Continue disabled={fields.length === 0 || herds.length === 0} onClick={onContinue}>Continue to horses</Continue></section>;
+function Locations({ fields, herds, retentionDays, saving, onAdd, onContinue, onUpdateRetention }: { readonly fields: readonly Field[]; readonly herds: readonly Herd[]; readonly retentionDays: number; readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>, kind: "field" | "herd") => Promise<void>; readonly onContinue: () => void; readonly onUpdateRetention: (event: FormEvent<HTMLFormElement>) => Promise<void> }): React.JSX.Element {
+  return <section><Intro step="Step one" title="Where do the horses live?">Add the field and herd names your team already uses. You can add more later.</Intro><div className="grid gap-5 md:grid-cols-2"><LocationCard title="Fields" example="North Field, Creek Field" items={fields} saving={saving} onSubmit={(event) => onAdd(event, "field")} /><LocationCard title="Herds" example="Willow Herd, Oak Herd" items={herds} saving={saving} onSubmit={(event) => onAdd(event, "herd")} /></div><div className="mt-5"><Card title="Weekly update storage" description="Choose how long published updates, replies, photos, and videos remain available."><form className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end" onSubmit={(event) => void onUpdateRetention(event)}><Label name="Keep weekly updates for"><select className={input} defaultValue={retentionDays} key={retentionDays} name="retentionDays"><option value="90">90 days</option><option value="180">180 days (recommended)</option><option value="365">1 year</option><option value="730">2 years</option></select></Label><button className={primary} disabled={saving} type="submit"><CalendarClock size={17} />Save retention</button></form><p className="mb-0 mt-4 rounded-xl bg-[#e4ece4] p-4 text-sm leading-6 text-[#385943]">Cleanup runs weekly. Horse information, care cards, medication history, people, and access are always preserved.</p></Card></div><Continue disabled={fields.length === 0 || herds.length === 0} onClick={onContinue}>Continue to horses</Continue></section>;
 }
 
 function LocationCard({ title, example, items, saving, onSubmit }: { readonly title: string; readonly example: string; readonly items: readonly (Field | Herd)[]; readonly saving: boolean; readonly onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void> }): React.JSX.Element {

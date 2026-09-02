@@ -4,9 +4,9 @@ export type Database = {
   public: {
     Tables: {
       organizations: {
-        Row: { id: string; name: string; slug: string; created_at: string };
-        Insert: { id?: string; name: string; slug: string; created_at?: string };
-        Update: { id?: string; name?: string; slug?: string; created_at?: string };
+        Row: { id: string; name: string; slug: string; update_retention_days: number; created_at: string };
+        Insert: { id?: string; name: string; slug: string; update_retention_days?: number; created_at?: string };
+        Update: { id?: string; name?: string; slug?: string; update_retention_days?: number; created_at?: string };
         Relationships: [];
       };
       profiles: {

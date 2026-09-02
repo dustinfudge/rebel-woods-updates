@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 
 import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
 
@@ -15,7 +16,11 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">): React.JSX.Element {
+interface RootLayoutProperties {
+  children: ReactNode;
+}
+
+export default function RootLayout({ children }: RootLayoutProperties): React.JSX.Element {
   return (
     <html lang="en">
       <body>

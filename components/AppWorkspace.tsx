@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatParticipant } from "@/components/ChatWindow";
 import { ConversationTimeline } from "@/components/ConversationTimeline";
 import { HerdBoard } from "@/components/HerdBoard";
+import { StaffAlertBoard } from "@/components/StaffAlertBoard";
 import { getPagesBasePath } from "@/lib/environment";
 import { getHerdRosterLabel } from "@/lib/herds";
 import { getHorseNotificationCounts } from "@/lib/notifications";
@@ -24,6 +25,8 @@ type Medication = Tables<"horse_medications">;
 type HorseAccess = Tables<"horse_access">;
 type HorseConversation = Tables<"horse_conversations">;
 type Notification = Tables<"notifications">;
+type StaffAlert = Tables<"staff_alerts">;
+type StaffAlertAcknowledgement = Tables<"staff_alert_acknowledgements">;
 
 interface WorkspaceData {
   readonly horses: readonly Horse[];
@@ -35,6 +38,8 @@ interface WorkspaceData {
   readonly conversations: readonly HorseConversation[];
   readonly profiles: readonly Profile[];
   readonly notifications: readonly Notification[];
+  readonly staffAlerts: readonly StaffAlert[];
+  readonly staffAlertAcknowledgements: readonly StaffAlertAcknowledgement[];
 }
 
 interface HorseDashboardItem {
@@ -45,7 +50,7 @@ interface HorseDashboardItem {
   readonly careProfile: CareProfile | null;
   readonly activeMedications: readonly Medication[];
   readonly conversation: HorseConversation;
-  readonly daysSinceStaffCommunication: number | null;
+  readonly daysSinceStaffCommunication: number;
   readonly needsStaffCommunication: boolean;
   readonly unreadReplyCount: number;
   readonly unreadAlertCount: number;
@@ -64,7 +69,7 @@ interface HerdOption {
 
 type CommunicationFilter = "all" | "attention" | "recent";
 
-const emptyWorkspaceData: WorkspaceData = { horses: [], fields: [], herds: [], careProfiles: [], medications: [], horseAccess: [], conversations: [], profiles: [], notifications: [] };
+const emptyWorkspaceData: WorkspaceData = { horses: [], fields: [], herds: [], careProfiles: [], medications: [], horseAccess: [], conversations: [], profiles: [], notifications: [], staffAlerts: [], staffAlertAcknowledgements: [] };
 const primaryButton = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#1d3528] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButton = "inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#cfd4ce] bg-white px-4 py-2 text-sm font-bold text-[#385943] disabled:opacity-50";
 const selectInput = "min-w-0 min-h-10 rounded-lg border border-[#cfd4ce] bg-white px-2 text-xs font-semibold text-[#385943] outline-none focus:border-[#385943] sm:min-h-11 sm:rounded-xl sm:px-3 sm:text-sm";
@@ -88,11 +93,11 @@ function calendarDaysSince(timestamp: string | null): number | null {
   return Math.max(0, Math.round((todayStart - dateStart) / 86_400_000));
 }
 
-function communicationPresentation(daysSinceStaffCommunication: number | null): { readonly label: string; readonly className: string } {
-  if (daysSinceStaffCommunication === null) return { label: "No staff update yet", className: "bg-[#f3ded3] text-[#73391f]" };
-  if (daysSinceStaffCommunication === 0) return { label: "Updated today", className: "bg-[#dcebdd] text-[#24502f]" };
-  if (daysSinceStaffCommunication < 7) return { label: `${daysSinceStaffCommunication} ${daysSinceStaffCommunication === 1 ? "day" : "days"} ago`, className: "bg-[#dcebdd] text-[#24502f]" };
-  return { label: `${daysSinceStaffCommunication} days ago`, className: "bg-[#f3ded3] text-[#73391f]" };
+function communicationPresentation(daysSinceStaffCommunication: number): { readonly label: string; readonly className: string } {
+  const dayLabel = `${daysSinceStaffCommunication} ${daysSinceStaffCommunication === 1 ? "day" : "days"}`;
+  return daysSinceStaffCommunication < 7
+    ? { label: dayLabel, className: "bg-[#dcebdd] text-[#24502f]" }
+    : { label: dayLabel, className: "bg-[#f3ded3] text-[#73391f]" };
 }
 
 async function signedThumbnailUrls(horses: readonly Horse[]): Promise<Readonly<Record<string, string>>> {
@@ -123,7 +128,8 @@ export function AppWorkspace(): React.JSX.Element {
 
   const loadWorkspace = useCallback(async (currentProfile: Profile, refreshThumbnails = false): Promise<void> => {
     const client = getSupabaseBrowserClient();
-    const [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, conversationsResult, profilesResult, notificationsResult] = await Promise.all([
+    const alertHistoryCutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+    const [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult] = await Promise.all([
       client.from("horses").select("*").eq("is_active", true).order("name"),
       client.from("fields").select("*").eq("is_active", true).order("name"),
       client.from("herds").select("*").eq("is_active", true).order("name"),
@@ -133,8 +139,10 @@ export function AppWorkspace(): React.JSX.Element {
       client.from("horse_conversations").select("*").order("last_staff_communication_at", { ascending: true, nullsFirst: true }),
       client.from("profiles").select("*").eq("is_active", true).order("full_name"),
       client.from("notifications").select("*").eq("user_id", currentProfile.id).is("read_at", null).order("created_at", { ascending: false }),
+      client.from("staff_alerts").select("*").gte("created_at", alertHistoryCutoff).order("created_at", { ascending: false }),
+      client.from("staff_alert_acknowledgements").select("*").gte("acknowledged_at", alertHistoryCutoff).order("acknowledged_at", { ascending: false }),
     ]);
-    const firstError = [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, conversationsResult, profilesResult, notificationsResult].map((result) => result.error).find((error) => error !== null);
+    const firstError = [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult].map((result) => result.error).find((error) => error !== null);
     if (firstError) throw firstError;
     const horses = horsesResult.data ?? [];
     setWorkspaceData({
@@ -147,6 +155,8 @@ export function AppWorkspace(): React.JSX.Element {
       conversations: conversationsResult.data ?? [],
       profiles: profilesResult.data ?? [],
       notifications: notificationsResult.data ?? [],
+      staffAlerts: staffAlertsResult.data ?? [],
+      staffAlertAcknowledgements: alertAcknowledgementsResult.data ?? [],
     });
     if (refreshThumbnails) setThumbnailUrls(await signedThumbnailUrls(horses));
   }, []);
@@ -201,6 +211,17 @@ export function AppWorkspace(): React.JSX.Element {
     };
   }, [profile]);
 
+  useEffect(() => {
+    if (!profile || profile.role === "owner") return;
+    const client = getSupabaseBrowserClient();
+    const staffAlertsChannel = client
+      .channel(`staff-alert-board:${profile.organization_id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "staff_alerts" }, () => { void loadWorkspace(profile); })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "staff_alert_acknowledgements" }, () => { void loadWorkspace(profile); })
+      .subscribe();
+    return (): void => { void client.removeChannel(staffAlertsChannel); };
+  }, [loadWorkspace, profile]);
+
   const horseItems = useMemo<readonly HorseDashboardItem[]>(() => {
     const fieldNames = new Map(workspaceData.fields.map((field) => [field.id, field.name]));
     const careByHorse = new Map(workspaceData.careProfiles.map((careProfile) => [careProfile.horse_id, careProfile]));
@@ -210,7 +231,7 @@ export function AppWorkspace(): React.JSX.Element {
       const conversation = conversationByHorse.get(horse.id);
       if (!conversation) return [];
       const notificationCounts = getHorseNotificationCounts(workspaceData.notifications, horse.id);
-      const daysSinceStaffCommunication = calendarDaysSince(conversation.last_staff_communication_at);
+      const daysSinceStaffCommunication = calendarDaysSince(conversation.last_staff_communication_at ?? horse.created_at) ?? 0;
       return [{
         horse,
         fieldName: horse.field_id ? fieldNames.get(horse.field_id) ?? "Unassigned" : "Unassigned",
@@ -220,7 +241,7 @@ export function AppWorkspace(): React.JSX.Element {
         activeMedications: workspaceData.medications.filter((medication) => medication.horse_id === horse.id && medication.status === "active"),
         conversation,
         daysSinceStaffCommunication,
-        needsStaffCommunication: daysSinceStaffCommunication === null || daysSinceStaffCommunication >= 7,
+        needsStaffCommunication: daysSinceStaffCommunication >= 7,
         unreadReplyCount: notificationCounts.replyCount,
         unreadAlertCount: notificationCounts.otherCount,
         owners: workspaceData.horseAccess
@@ -284,18 +305,52 @@ export function AppWorkspace(): React.JSX.Element {
     }));
   }
 
+  async function acknowledgeStaffAlert(alertId: string): Promise<boolean> {
+    if (!profile || profile.role === "owner") return false;
+    const { data: acknowledgedAt, error } = await getSupabaseBrowserClient().rpc("acknowledge_staff_alert", { target_alert_id: alertId });
+    if (error) {
+      setNotice({ tone: "error", message: "The alert acknowledgement could not be saved." });
+      return false;
+    }
+    setWorkspaceData((currentData) => currentData.staffAlertAcknowledgements.some((acknowledgement) => acknowledgement.alert_id === alertId && acknowledgement.profile_id === profile.id)
+      ? currentData
+      : { ...currentData, staffAlertAcknowledgements: [...currentData.staffAlertAcknowledgements, { alert_id: alertId, profile_id: profile.id, organization_id: profile.organization_id, acknowledged_at: acknowledgedAt }] });
+    return true;
+  }
+
+  async function createCustomStaffAlert(message: string): Promise<boolean> {
+    if (profile?.role !== "admin") return false;
+    const { error } = await getSupabaseBrowserClient().rpc("create_custom_staff_alert", { alert_message: message });
+    if (error) {
+      setNotice({ tone: "error", message: "The custom staff alert could not be added." });
+      return false;
+    }
+    await loadWorkspace(profile);
+    setNotice({ tone: "success", message: "The staff alert was added." });
+    return true;
+  }
+
+  async function removeCustomStaffAlert(alertId: string): Promise<boolean> {
+    if (profile?.role !== "admin") return false;
+    const { error } = await getSupabaseBrowserClient().rpc("remove_custom_staff_alert", { target_alert_id: alertId });
+    if (error) {
+      setNotice({ tone: "error", message: "The custom staff alert could not be removed." });
+      return false;
+    }
+    await loadWorkspace(profile);
+    setNotice({ tone: "success", message: "The custom alert was moved to History." });
+    return true;
+  }
+
   async function updateHorseField(horseId: string, fieldId: string | null): Promise<boolean> {
     if (profile?.role !== "admin") return false;
     setNotice(null);
-    const { error } = await getSupabaseBrowserClient().from("horses").update({ field_id: fieldId }).eq("id", horseId);
+    const { error } = await getSupabaseBrowserClient().rpc("move_horse_to_field", { target_horse_id: horseId, target_field_id: fieldId });
     if (error) {
       setNotice({ tone: "error", message: "The field could not be updated." });
       return false;
     }
-    setWorkspaceData((currentData) => ({
-      ...currentData,
-      horses: currentData.horses.map((horse) => horse.id === horseId ? { ...horse, field_id: fieldId } : horse),
-    }));
+    await loadWorkspace(profile);
     setNotice({ tone: "success", message: "The horse’s field was updated." });
     return true;
   }
@@ -304,16 +359,26 @@ export function AppWorkspace(): React.JSX.Element {
     if (profile?.role !== "admin") return false;
     setNotice(null);
     const horseName = workspaceData.horses.find((horse) => horse.id === horseId)?.name ?? "Horse";
-    const { error } = await getSupabaseBrowserClient().from("horses").update({ herd_id: herdId }).eq("id", horseId);
+    const { error } = await getSupabaseBrowserClient().rpc("move_horse_to_herd", { target_horse_id: horseId, target_herd_id: herdId });
     if (error) {
       setNotice({ tone: "error", message: `${horseName} could not be moved. Please try again.` });
       return false;
     }
-    setWorkspaceData((currentData) => ({
-      ...currentData,
-      horses: currentData.horses.map((horse) => horse.id === horseId ? { ...horse, herd_id: herdId } : horse),
-    }));
+    await loadWorkspace(profile);
     setNotice({ tone: "success", message: herdId ? `${horseName} was moved to the new herd.` : `${horseName} was removed from their herd.` });
+    return true;
+  }
+
+  async function updateHerdField(herdId: string, fieldId: string | null): Promise<boolean> {
+    if (profile?.role !== "admin") return false;
+    setNotice(null);
+    const { error } = await getSupabaseBrowserClient().rpc("move_herd_to_field", { target_herd_id: herdId, target_field_id: fieldId });
+    if (error) {
+      setNotice({ tone: "error", message: "The herd’s field could not be updated." });
+      return false;
+    }
+    await loadWorkspace(profile);
+    setNotice({ tone: "success", message: "The entire herd was moved to the selected field." });
     return true;
   }
 
@@ -325,12 +390,14 @@ export function AppWorkspace(): React.JSX.Element {
     <header className="sticky top-0 z-20 border-b border-[#dedfd8] bg-[#fffdf8]/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-6xl items-center justify-between gap-3"><div><strong className="block font-serif text-xl">Rebel Woods</strong><small className="font-bold uppercase tracking-[0.14em] text-[#a65333]">{roleLabel(profile)}</small></div><div className="flex items-center gap-2">{profile.role === "admin" ? <a className={secondaryButton} href={`${getPagesBasePath()}/setup/`}><Settings size={16} /><span className="hidden sm:inline">Setup</span></a> : null}<button aria-label="Sign out" className="grid h-10 w-10 place-items-center rounded-full border border-[#dedfd8] bg-white" onClick={() => void getSupabaseBrowserClient().auth.signOut()} type="button"><LogOut size={17} /></button></div></div></header>
     <main className="mx-auto max-w-6xl px-4 py-7 sm:px-5 sm:py-10">
       {notice ? <div className={`mb-5 rounded-2xl border p-4 text-sm font-semibold ${notice.tone === "success" ? "border-[#b8c9bb] bg-[#e4ece4] text-[#1d3528]" : "border-[#e1b8a6] bg-[#f3ded3] text-[#73391f]"}`} role="status">{notice.message}</div> : null}
-      {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onFieldUpdate={updateHorseField} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : isManagingHerds && profile.role === "admin" ? <HerdBoard herds={workspaceData.herds} horses={horseItems.map((item) => ({ herdId: item.horse.herd_id, id: item.horse.id, name: item.horse.name, thumbnailUrl: item.thumbnailUrl }))} onBack={() => { setIsManagingHerds(false); setNotice(null); }} onMoveHorse={updateHorseHerd} /> : <Dashboard communicationFilter={communicationFilter} fieldFilter={fieldFilter} fields={workspaceData.fields} filteredHorses={filteredHorseItems} herdFilter={herdFilter} herdOptions={herdOptions} horses={horseItems} isStaff={isStaff} profile={profile} onCommunicationFilter={setCommunicationFilter} onFieldFilter={setFieldFilter} onHerdFilter={setHerdFilter} onManageHerds={() => { setIsManagingHerds(true); setNotice(null); }} onOpenHorse={(horseId) => void openHorse(horseId)} />}
+      {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onFieldUpdate={updateHorseField} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : isManagingHerds && profile.role === "admin" ? <HerdBoard fields={workspaceData.fields} herds={workspaceData.herds.map((herd) => ({ fieldId: herd.field_id, id: herd.id }))} horses={horseItems.map((item) => ({ herdId: item.horse.herd_id, id: item.horse.id, name: item.horse.name, thumbnailUrl: item.thumbnailUrl }))} onBack={() => { setIsManagingHerds(false); setNotice(null); }} onMoveHerdField={updateHerdField} onMoveHorse={updateHorseHerd} /> : <Dashboard acknowledgements={workspaceData.staffAlertAcknowledgements} alerts={workspaceData.staffAlerts} communicationFilter={communicationFilter} fieldFilter={fieldFilter} fields={workspaceData.fields} filteredHorses={filteredHorseItems} herdFilter={herdFilter} herdOptions={herdOptions} horses={horseItems} isStaff={isStaff} people={workspaceData.profiles} profile={profile} onAcknowledgeAlert={acknowledgeStaffAlert} onCommunicationFilter={setCommunicationFilter} onCreateCustomAlert={createCustomStaffAlert} onFieldFilter={setFieldFilter} onHerdFilter={setHerdFilter} onManageHerds={() => { setIsManagingHerds(true); setNotice(null); }} onOpenHorse={(horseId) => void openHorse(horseId)} onRemoveCustomAlert={removeCustomStaffAlert} />}
     </main>
   </div>;
 }
 
 interface DashboardProps {
+  readonly acknowledgements: readonly StaffAlertAcknowledgement[];
+  readonly alerts: readonly StaffAlert[];
   readonly communicationFilter: CommunicationFilter;
   readonly fieldFilter: string;
   readonly fields: readonly Field[];
@@ -339,29 +406,26 @@ interface DashboardProps {
   readonly herdOptions: readonly HerdOption[];
   readonly horses: readonly HorseDashboardItem[];
   readonly isStaff: boolean;
+  readonly people: readonly Profile[];
   readonly profile: Profile;
+  readonly onAcknowledgeAlert: (alertId: string) => Promise<boolean>;
   readonly onCommunicationFilter: (filter: CommunicationFilter) => void;
+  readonly onCreateCustomAlert: (message: string) => Promise<boolean>;
   readonly onFieldFilter: (fieldId: string) => void;
   readonly onHerdFilter: (herdId: string) => void;
   readonly onManageHerds: () => void;
   readonly onOpenHorse: (horseId: string) => void;
+  readonly onRemoveCustomAlert: (alertId: string) => Promise<boolean>;
 }
 
-function Dashboard({ communicationFilter, fieldFilter, fields, filteredHorses, herdFilter, herdOptions, horses, isStaff, profile, onCommunicationFilter, onFieldFilter, onHerdFilter, onManageHerds, onOpenHorse }: DashboardProps): React.JSX.Element {
-  const attentionCount = horses.filter((item) => item.needsStaffCommunication).length;
-  const recentlyUpdatedCount = horses.length - attentionCount;
-
+function Dashboard({ acknowledgements, alerts, communicationFilter, fieldFilter, fields, filteredHorses, herdFilter, herdOptions, horses, isStaff, people, profile, onAcknowledgeAlert, onCommunicationFilter, onCreateCustomAlert, onFieldFilter, onHerdFilter, onManageHerds, onOpenHorse, onRemoveCustomAlert }: DashboardProps): React.JSX.Element {
   return <>
     <section className="mb-4 overflow-hidden rounded-2xl bg-[#1d3528] p-5 text-white shadow-xl sm:mb-7 sm:rounded-[2rem] sm:p-9">
-      <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#d9a27b] sm:mb-2 sm:text-xs">{isStaff ? "Stable overview" : "Your horses"}</p>
-      <div className="grid gap-3 sm:gap-6 md:grid-cols-[1fr_auto] md:items-end">
-        <div><h1 className="mb-0 max-w-2xl font-serif text-3xl leading-tight sm:mb-3 sm:text-5xl">Welcome, {profile.full_name.split(" ")[0]}.</h1><p className="mb-0 hidden max-w-2xl leading-7 text-[#cdd9cf] sm:block">{isStaff ? "Horses without a staff message in seven days appear first. Open a card to review care or continue the conversation." : "Open a horse to see care information and the complete private conversation."}</p></div>
-        {isStaff ? <div className="grid grid-cols-2 gap-2 sm:gap-3"><div className="rounded-xl bg-white/10 px-3 py-2 sm:rounded-2xl sm:px-5 sm:py-4"><strong className="mr-1 text-2xl sm:block sm:text-3xl">{attentionCount}</strong><small className="text-[#cdd9cf]">need contact</small></div><div className="rounded-xl bg-white/10 px-3 py-2 sm:rounded-2xl sm:px-5 sm:py-4"><strong className="mr-1 text-2xl sm:block sm:text-3xl">{recentlyUpdatedCount}</strong><small className="text-[#cdd9cf]">recent contact</small></div></div> : null}
-      </div>
+      {isStaff ? <div className="grid gap-5 lg:grid-cols-[minmax(13rem,0.5fr)_minmax(0,1.5fr)] lg:items-start"><div><p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#d9a27b] sm:text-xs">Stable overview</p><h1 className="mb-0 font-serif text-4xl leading-tight sm:text-5xl">Welcome, {profile.full_name.split(" ")[0]}.</h1></div><StaffAlertBoard acknowledgements={acknowledgements} alerts={alerts} currentProfile={profile} people={people} onAcknowledge={onAcknowledgeAlert} onCreateCustomAlert={onCreateCustomAlert} onRemoveCustomAlert={onRemoveCustomAlert} /></div> : <div><p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#d9a27b] sm:text-xs">Your horses</p><h1 className="mb-3 font-serif text-4xl leading-tight sm:text-5xl">Welcome, {profile.full_name.split(" ")[0]}.</h1><p className="mb-0 max-w-2xl leading-7 text-[#cdd9cf]">Open a horse to see care information and the complete private conversation.</p></div>}
     </section>
 
     {isStaff ? <section className="mb-4 grid grid-cols-3 gap-2 rounded-xl border border-[#dedfd8] bg-[#fffdf8] p-2 sm:mb-6 sm:flex sm:flex-wrap sm:gap-3 sm:rounded-2xl sm:p-4" aria-label="Horse filters">
-      <select aria-label="Filter by staff contact" className={selectInput} onChange={(event) => onCommunicationFilter(event.target.value as CommunicationFilter)} value={communicationFilter}><option value="all">All horses</option><option value="attention">Needs contact</option><option value="recent">Recent contact</option></select>
+      <select aria-label="Filter by days since staff contact" className={selectInput} onChange={(event) => onCommunicationFilter(event.target.value as CommunicationFilter)} value={communicationFilter}><option value="all">All contact ages</option><option value="attention">7+ days</option><option value="recent">Under 7 days</option></select>
       <select aria-label="Filter by field" className={selectInput} onChange={(event) => onFieldFilter(event.target.value)} value={fieldFilter}><option value="">All fields</option>{fields.map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select>
       <select aria-label="Filter by herd" className={selectInput} onChange={(event) => onHerdFilter(event.target.value)} value={herdFilter}><option value="">All herds</option>{herdOptions.map((herd) => <option key={herd.id} value={herd.id}>{herd.label}</option>)}</select>
       {profile.role === "admin" ? <button className={`${secondaryButton} col-span-3 sm:ml-auto`} onClick={onManageHerds} type="button"><MapPin size={16} />Manage herds</button> : null}
@@ -382,7 +446,7 @@ function HorseCard({ item, onOpen }: HorseCardProps): React.JSX.Element {
   return <button className="group overflow-hidden rounded-2xl border border-[#dedfd8] bg-[#fffdf8] text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[#385943] sm:rounded-[1.75rem]" onClick={onOpen} type="button">
     <div className="relative aspect-[5/4] overflow-hidden bg-[#dfe5df] sm:aspect-[4/3]">
       {item.thumbnailUrl ? <Image alt={`${item.horse.name} thumbnail`} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" decoding="async" height={540} loading="lazy" src={item.thumbnailUrl} unoptimized width={720} /> : <div className="grid h-full place-items-center font-serif text-4xl text-[#789080] sm:text-6xl">{item.horse.name.slice(0, 1).toUpperCase()}</div>}
-      <span className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[10px] font-bold shadow-sm sm:bottom-auto sm:left-3 sm:top-3 sm:px-3 sm:text-xs ${communication.className}`}>{communication.label}</span>
+      <span aria-label={`${communication.label} since last staff contact`} className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[10px] font-bold shadow-sm sm:bottom-auto sm:left-3 sm:top-3 sm:px-3 sm:text-xs ${communication.className}`}>{communication.label}</span>
       {item.unreadReplyCount > 0 ? <span aria-label={`${item.unreadReplyCount} unread ${item.unreadReplyCount === 1 ? "reply" : "replies"}`} className="absolute right-2 top-2 inline-flex min-h-7 items-center justify-center gap-1 rounded-full bg-[#1f5f8b] px-2 text-[10px] font-extrabold text-white shadow-lg ring-2 ring-white"><MessageCircle aria-hidden="true" size={13} />{item.unreadReplyCount === 1 ? "New reply" : `${item.unreadReplyCount} replies`}</span> : item.unreadAlertCount > 0 ? <span aria-label={`${item.unreadAlertCount} unread care ${item.unreadAlertCount === 1 ? "alert" : "alerts"}`} className="absolute right-2 top-2 inline-flex min-h-7 min-w-7 items-center justify-center rounded-full bg-[#f6e8c9] px-2 text-[10px] font-extrabold text-[#75520e] shadow-lg ring-2 ring-white"><Bell aria-hidden="true" className="mr-1" size={13} />{item.unreadAlertCount}</span> : null}
     </div>
     <span className="block p-3 sm:p-5"><strong className="mb-2 block truncate font-serif text-xl sm:text-3xl">{item.horse.name}</strong><span className="grid grid-cols-2 gap-1.5"><HorseLocationBox label="Field" value={item.fieldName} /><HorseLocationBox label="Herd" value={item.herdName} /></span>{hasSpecialRequirements ? <span className="mt-2 flex items-center gap-1.5 rounded-lg border-2 border-[#a65333] bg-[#f3ded3] px-2 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.06em] text-[#73391f] sm:mt-4 sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2 sm:text-xs"><ShieldAlert aria-hidden="true" size={16} /><span className="sm:hidden">Special</span><span className="hidden sm:inline">Special requirements</span></span> : null}{item.activeMedications.length > 0 ? <span className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-[#f6e8c9] px-2 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.06em] text-[#75520e] sm:mt-2 sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2 sm:text-xs"><Pill aria-hidden="true" size={15} /><span className="sm:hidden">Medication</span><span className="hidden sm:inline">Current medication</span></span> : null}</span>

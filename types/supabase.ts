@@ -53,9 +53,9 @@ export type Database = {
         Relationships: [];
       };
       herds: {
-        Row: { id: string; organization_id: string; name: string; is_active: boolean; created_at: string };
-        Insert: { id?: string; organization_id: string; name: string; is_active?: boolean; created_at?: string };
-        Update: { name?: string; is_active?: boolean };
+        Row: { id: string; organization_id: string; name: string; field_id: string | null; is_active: boolean; created_at: string };
+        Insert: { id?: string; organization_id: string; name: string; field_id?: string | null; is_active?: boolean; created_at?: string };
+        Update: { name?: string; field_id?: string | null; is_active?: boolean };
         Relationships: [];
       };
       horses: {
@@ -429,6 +429,40 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      staff_alerts: {
+        Row: {
+          id: string;
+          organization_id: string;
+          horse_id: string | null;
+          herd_id: string | null;
+          kind: Database["public"]["Enums"]["staff_alert_kind"];
+          priority: Database["public"]["Enums"]["staff_alert_priority"];
+          category_key: string;
+          title: string;
+          body: string;
+          previous_values: Json;
+          new_values: Json;
+          changed_by: string | null;
+          superseded_at: string | null;
+          removed_at: string | null;
+          removed_by: string | null;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      staff_alert_acknowledgements: {
+        Row: {
+          alert_id: string;
+          profile_id: string;
+          organization_id: string;
+          acknowledged_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       notifications: {
         Row: {
           id: string;
@@ -478,6 +512,12 @@ export type Database = {
       can_access_conversation_message: { Args: { target_message_id: string }; Returns: boolean };
       is_admin: { Args: Record<PropertyKey, never>; Returns: boolean };
       is_staff: { Args: Record<PropertyKey, never>; Returns: boolean };
+      acknowledge_staff_alert: { Args: { target_alert_id: string }; Returns: string };
+      create_custom_staff_alert: { Args: { alert_message: string }; Returns: string };
+      move_herd_to_field: { Args: { target_field_id: string | null; target_herd_id: string }; Returns: undefined };
+      move_horse_to_field: { Args: { target_field_id: string | null; target_horse_id: string }; Returns: undefined };
+      move_horse_to_herd: { Args: { target_herd_id: string | null; target_horse_id: string }; Returns: undefined };
+      remove_custom_staff_alert: { Args: { target_alert_id: string }; Returns: undefined };
       renotify_weekly_update: { Args: { target_update_id: string }; Returns: undefined };
     };
     Enums: {
@@ -487,6 +527,8 @@ export type Database = {
       media_type: "photo" | "video";
       medication_status: "active" | "completed" | "discontinued";
       notification_kind: "weekly_update" | "reply" | "care_change" | "medication_change";
+      staff_alert_kind: "horse_added" | "horse_removed" | "herd_membership" | "herd_field" | "care" | "medication" | "custom";
+      staff_alert_priority: "normal" | "urgent";
     };
     CompositeTypes: Record<never, never>;
   };

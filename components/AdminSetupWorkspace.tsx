@@ -46,11 +46,6 @@ interface Notice {
   message: string;
 }
 
-interface HerdOption {
-  readonly id: string;
-  readonly label: string;
-}
-
 const emptyData: SetupData = { organization: null, fields: [], herds: [], horses: [], care: [], profiles: [], access: [], medications: [] };
 const input = "min-h-12 w-full rounded-xl border border-[#cfd4ce] bg-white px-4 text-base outline-none focus:border-[#385943] focus:ring-2 focus:ring-[#385943]/10";
 const area = `${input} min-h-24 resize-y py-3 leading-6`;
@@ -195,10 +190,6 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     }));
   }, [data, thumbnailUrls]);
   const horses = horseViews.filter((horse) => horse.is_active);
-  const herdOptions: readonly HerdOption[] = data.herds
-    .filter((herd) => herd.is_active)
-    .map((herd) => ({ id: herd.id, label: getHerdRosterLabel(herd.id, data.horses) }))
-    .sort((left, right) => left.label.localeCompare(right.label));
   const owners = data.profiles.filter((person) => person.role === "owner" && person.is_active);
   const hasInvitedPerson = data.profiles.some((person) => person.id !== profile?.id && person.is_active);
   const selectedHorse = horseViews.find((horse) => horse.id === selectedHorseId) ?? null;
@@ -242,8 +233,8 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       const client = getSupabaseBrowserClient();
       const { data: horse, error } = await client.from("horses").insert({
         organization_id: profile.organization_id,
-        name: value(formData, "horseName"), field_id: value(formData, "fieldId") || null,
-        herd_id: value(formData, "herdId") || null, ...horseInformationFrom(formData),
+        name: value(formData, "horseName"), field_id: null,
+        herd_id: null, ...horseInformationFrom(formData),
       }).select("*").single();
       if (error) throw error;
       const { error: careError } = await client.from("care_profiles").insert({
@@ -265,10 +256,6 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     const formData = new FormData(event.currentTarget);
     await mutate(async () => {
       const client = getSupabaseBrowserClient();
-      const { error: horseError } = await client.from("horses").update({
-        field_id: value(formData, "fieldId") || null, herd_id: value(formData, "herdId") || null,
-      }).eq("id", selectedHorse.id);
-      if (horseError) throw horseError;
       const { error } = await client.from("care_profiles").upsert({
         horse_id: selectedHorse.id, updated_by: profile.id, am_feed: value(formData, "amFeed"),
         pm_feed: value(formData, "pmFeed"), supplements_am: value(formData, "supplementsAm"),
@@ -397,7 +384,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
           <Tab active={section === "people"} complete={hasInvitedPerson} icon={<UsersRound size={18} />} label="3. People & access" onClick={() => setSection("people")} />
         </nav>
         {section === "locations" ? <Locations fields={data.fields} herds={data.herds} retentionDays={data.organization?.update_retention_days ?? 180} saving={saving} onAdd={addLocation} onContinue={() => setSection("horses")} onUpdateRetention={updateRetention} /> : null}
-        {section === "horses" ? <Horses access={data.access} fields={data.fields} herdOptions={herdOptions} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddMedication={addMedication} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
+        {section === "horses" ? <Horses access={data.access} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddMedication={addMedication} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
         {section === "people" ? <People access={data.access} horses={horses} owners={owners} profiles={data.profiles} saving={saving} onGrant={grantAccess} onInvite={invite} onUpdatePhone={updatePersonPhone} /> : null}
       </div>
     </div>
@@ -448,33 +435,29 @@ function LocationCard({ title, example, items, saving, onSubmit }: { readonly ti
   return <Card title={title} description={`Examples: ${example}`}><form className="flex gap-2" onSubmit={(event) => void onSubmit(event)}><input className={input} maxLength={100} name="name" placeholder={`${title.slice(0, -1)} name`} required /><button className={primary} disabled={saving} type="submit"><Plus size={17} /><span className="sr-only sm:not-sr-only">Add</span></button></form><div className="mt-4 flex flex-wrap gap-2">{items.filter((item) => item.is_active).map((item) => <span className="rounded-full bg-[#e4ece4] px-3 py-1.5 text-sm font-bold text-[#385943]" key={item.id}>{item.name}</span>)}{items.length === 0 ? <p className="mb-0 text-sm text-[#68736b]">None added yet.</p> : null}</div></Card>;
 }
 
-function LocationSelectors({ fields, herdOptions, horse }: { readonly fields: readonly Field[]; readonly herdOptions: readonly HerdOption[]; readonly horse?: Horse }): React.JSX.Element {
-  return <div className="grid gap-4 sm:grid-cols-2"><Label name="Field"><select className={input} defaultValue={horse?.field_id ?? ""} name="fieldId"><option value="">Not assigned</option>{fields.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Label><Label name="Herd membership"><select className={input} defaultValue={horse?.herd_id ?? ""} name="herdId"><option value="">Remove from herd</option>{herdOptions.map((herd) => <option key={herd.id} value={herd.id}>{herd.label}</option>)}</select></Label></div>;
-}
-
 function CareFields({ care }: { readonly care?: CareProfile | null }): React.JSX.Element {
   return <><div className="grid gap-4 sm:grid-cols-2"><Label name="AM feed"><textarea className={area} defaultValue={care?.am_feed ?? ""} maxLength={2000} name="amFeed" /></Label><Label name="PM feed"><textarea className={area} defaultValue={care?.pm_feed ?? ""} maxLength={2000} name="pmFeed" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="AM supplements"><textarea className={area} defaultValue={care?.supplements_am ?? ""} maxLength={2000} name="supplementsAm" /></Label><Label name="PM supplements"><textarea className={area} defaultValue={care?.supplements_pm ?? ""} maxLength={2000} name="supplementsPm" /></Label></div><Label name="Special requirements"><textarea className={area} defaultValue={care?.special_requirements ?? ""} maxLength={4000} name="specialRequirements" placeholder="Care instructions everyone should know" /></Label></>;
 }
 
 interface HorseSectionProps {
-  access: readonly HorseAccess[]; fields: readonly Field[]; herdOptions: readonly HerdOption[]; horses: readonly HorseView[]; profiles: readonly Profile[]; saving: boolean; selectedHorse: HorseView | null;
+  access: readonly HorseAccess[]; horses: readonly HorseView[]; profiles: readonly Profile[]; saving: boolean; selectedHorse: HorseView | null;
   onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void>; onAddMedication: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCompleteMedication: (medication: Medication) => Promise<void>; onContinue: () => void; onSelect: (id: string | null) => void;
   onUpdateCare: (event: FormEvent<HTMLFormElement>) => Promise<void>; onUpdateInformation: (event: FormEvent<HTMLFormElement>) => Promise<void>;
 }
 
 function Horses(props: HorseSectionProps): React.JSX.Element {
-  const { access, fields, herdOptions, horses, profiles, saving, selectedHorse, onAdd, onAddMedication, onCompleteMedication, onContinue, onSelect, onUpdateCare, onUpdateInformation } = props;
+  const { access, horses, profiles, saving, selectedHorse, onAdd, onAddMedication, onCompleteMedication, onContinue, onSelect, onUpdateCare, onUpdateInformation } = props;
   const people = new Map(profiles.map((person) => [person.id, person]));
   const ownerContacts = selectedHorse ? access.filter((permission) => permission.horse_id === selectedHorse.id).flatMap((permission) => {
     const owner = people.get(permission.profile_id);
     return owner?.role === "owner" ? [{ owner, relationship: permission.relationship }] : [];
   }) : [];
-  return <section><Intro step="Step two" title="Add horses, information, and care instructions.">Only administrators can change this information. Special requirement changes automatically alert administrators and Rebel Wranglers.</Intro><div className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]"><Card title="Your horses" description={`${horses.length} active ${horses.length === 1 ? "horse" : "horses"}`}><div className="space-y-2">{horses.length === 0 ? <Empty>No horses added yet.</Empty> : horses.map((horse) => <button className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${selectedHorse?.id === horse.id ? "border-[#385943] bg-[#e4ece4]" : "border-[#dedfd8] bg-white"}`} key={horse.id} onClick={() => onSelect(horse.id)} type="button">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-12 w-12 shrink-0 rounded-full bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#1d3528] font-serif text-white">{horse.name[0]}</span>}<span className="min-w-0 flex-1"><strong className="block truncate">{horse.name}</strong><small className="block truncate text-[#68736b]">{horse.fieldName} · {horse.herdName}</small></span><ArrowRight size={17} /></button>)}</div></Card>{selectedHorse ? <div className="space-y-5"><HorseInformationCard horse={selectedHorse} ownerContacts={ownerContacts} saving={saving} onUpdate={onUpdateInformation} /><Card title={`${selectedHorse.name}’s care card`} description="Feed, supplements, and daily instructions"><form className="space-y-4" key={selectedHorse.careProfile?.updated_at ?? selectedHorse.id} onSubmit={(event) => void onUpdateCare(event)}><LocationSelectors fields={fields} herdOptions={herdOptions} horse={selectedHorse} /><CareFields care={selectedHorse.careProfile} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save care card</button></form></Card><MedicationCard horse={selectedHorse} saving={saving} onAdd={onAddMedication} onComplete={onCompleteMedication} /></div> : <AddHorseCard fields={fields} herdOptions={herdOptions} saving={saving} onAdd={onAdd} />}</div>{selectedHorse ? <button className={`${secondary} mt-5`} onClick={() => onSelect(null)} type="button"><Plus size={16} />Add another horse</button> : null}<Continue disabled={horses.length === 0} onClick={onContinue}>Continue to people</Continue></section>;
+  return <section><Intro step="Step two" title="Add horses, information, and care instructions.">Only administrators can change this information. Special requirement changes automatically alert administrators and Rebel Wranglers.</Intro><div className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]"><Card title="Your horses" description={`${horses.length} active ${horses.length === 1 ? "horse" : "horses"}`}><div className="space-y-2">{horses.length === 0 ? <Empty>No horses added yet.</Empty> : horses.map((horse) => <button className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${selectedHorse?.id === horse.id ? "border-[#385943] bg-[#e4ece4]" : "border-[#dedfd8] bg-white"}`} key={horse.id} onClick={() => onSelect(horse.id)} type="button">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-12 w-12 shrink-0 rounded-full bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#1d3528] font-serif text-white">{horse.name[0]}</span>}<span className="min-w-0 flex-1"><strong className="block truncate">{horse.name}</strong><small className="block truncate text-[#68736b]">{horse.fieldName} · {horse.herdName}</small></span><ArrowRight size={17} /></button>)}</div></Card>{selectedHorse ? <div className="space-y-5"><HorseInformationCard horse={selectedHorse} ownerContacts={ownerContacts} saving={saving} onUpdate={onUpdateInformation} /><Card title={`${selectedHorse.name}’s care card`} description="Feed, supplements, and daily instructions"><form className="space-y-4" key={selectedHorse.careProfile?.updated_at ?? selectedHorse.id} onSubmit={(event) => void onUpdateCare(event)}><CareFields care={selectedHorse.careProfile} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save care card</button></form></Card><MedicationCard horse={selectedHorse} saving={saving} onAdd={onAddMedication} onComplete={onCompleteMedication} /></div> : <AddHorseCard saving={saving} onAdd={onAdd} />}</div>{selectedHorse ? <button className={`${secondary} mt-5`} onClick={() => onSelect(null)} type="button"><Plus size={16} />Add another horse</button> : null}<Continue disabled={horses.length === 0} onClick={onContinue}>Continue to people</Continue></section>;
 }
 
-function AddHorseCard({ fields, herdOptions, saving, onAdd }: { readonly fields: readonly Field[]; readonly herdOptions: readonly HerdOption[]; readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void> }): React.JSX.Element {
-  return <Card title="Add a horse" description="Unknown profile and care details can be finished later."><form className="space-y-4" onSubmit={(event) => void onAdd(event)}><Label name="Horse name"><input className={input} maxLength={100} name="horseName" required /></Label><HorseInformationFields /><LocationSelectors fields={fields} herdOptions={herdOptions} /><CareFields /><button className={primary} disabled={saving} type="submit"><Plus size={17} />Add horse</button></form></Card>;
+function AddHorseCard({ saving, onAdd }: { readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void> }): React.JSX.Element {
+  return <Card title="Add a horse" description="New horses begin unassigned so they can be placed with the visual herd manager."><form className="space-y-4" onSubmit={(event) => void onAdd(event)}><Label name="Horse name"><input className={input} maxLength={100} name="horseName" required /></Label><HorseInformationFields /><CareFields /><button className={primary} disabled={saving} type="submit"><Plus size={17} />Add horse</button></form></Card>;
 }
 
 function HorseInformationFields({ horse }: { readonly horse?: Horse }): React.JSX.Element {

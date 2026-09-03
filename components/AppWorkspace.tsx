@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatParticipant } from "@/components/ChatWindow";
 import { ConversationTimeline } from "@/components/ConversationTimeline";
 import { getPagesBasePath } from "@/lib/environment";
+import { getHerdRosterLabel } from "@/lib/herds";
 import { getHorseNotificationCounts } from "@/lib/notifications";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import type { Tables } from "@/types/supabase";
@@ -53,6 +54,11 @@ interface HorseDashboardItem {
 interface WorkspaceNotice {
   readonly tone: "success" | "error";
   readonly message: string;
+}
+
+interface HerdOption {
+  readonly id: string;
+  readonly label: string;
 }
 
 type CommunicationFilter = "all" | "attention" | "recent";
@@ -195,7 +201,6 @@ export function AppWorkspace(): React.JSX.Element {
 
   const horseItems = useMemo<readonly HorseDashboardItem[]>(() => {
     const fieldNames = new Map(workspaceData.fields.map((field) => [field.id, field.name]));
-    const herdNames = new Map(workspaceData.herds.map((herd) => [herd.id, herd.name]));
     const careByHorse = new Map(workspaceData.careProfiles.map((careProfile) => [careProfile.horse_id, careProfile]));
     const conversationByHorse = new Map(workspaceData.conversations.map((conversation) => [conversation.horse_id, conversation]));
     const profileById = new Map(workspaceData.profiles.map((person) => [person.id, person]));
@@ -207,7 +212,7 @@ export function AppWorkspace(): React.JSX.Element {
       return [{
         horse,
         fieldName: horse.field_id ? fieldNames.get(horse.field_id) ?? "Unassigned" : "Unassigned",
-        herdName: horse.herd_id ? herdNames.get(horse.herd_id) ?? "Unassigned" : "Unassigned",
+        herdName: getHerdRosterLabel(horse.herd_id, workspaceData.horses),
         thumbnailUrl: horse.photo_path ? thumbnailUrls[horse.photo_path] ?? null : null,
         careProfile: careByHorse.get(horse.id) ?? null,
         activeMedications: workspaceData.medications.filter((medication) => medication.horse_id === horse.id && medication.status === "active"),
@@ -225,6 +230,11 @@ export function AppWorkspace(): React.JSX.Element {
       }];
     });
   }, [thumbnailUrls, workspaceData]);
+
+  const herdOptions: readonly HerdOption[] = workspaceData.herds
+    .filter((herd) => herd.is_active)
+    .map((herd) => ({ id: herd.id, label: getHerdRosterLabel(herd.id, workspaceData.horses) }))
+    .sort((left, right) => left.label.localeCompare(right.label));
 
   const filteredHorseItems = useMemo<readonly HorseDashboardItem[]>(() => horseItems
     .filter((item) => !fieldFilter || item.horse.field_id === fieldFilter)
@@ -296,7 +306,7 @@ export function AppWorkspace(): React.JSX.Element {
     <header className="sticky top-0 z-20 border-b border-[#dedfd8] bg-[#fffdf8]/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-6xl items-center justify-between gap-3"><div><strong className="block font-serif text-xl">Rebel Woods</strong><small className="font-bold uppercase tracking-[0.14em] text-[#a65333]">{roleLabel(profile)}</small></div><div className="flex items-center gap-2">{profile.role === "admin" ? <a className={secondaryButton} href={`${getPagesBasePath()}/setup/`}><Settings size={16} /><span className="hidden sm:inline">Setup</span></a> : null}<button aria-label="Sign out" className="grid h-10 w-10 place-items-center rounded-full border border-[#dedfd8] bg-white" onClick={() => void getSupabaseBrowserClient().auth.signOut()} type="button"><LogOut size={17} /></button></div></div></header>
     <main className="mx-auto max-w-6xl px-4 py-7 sm:px-5 sm:py-10">
       {notice ? <div className={`mb-5 rounded-2xl border p-4 text-sm font-semibold ${notice.tone === "success" ? "border-[#b8c9bb] bg-[#e4ece4] text-[#1d3528]" : "border-[#e1b8a6] bg-[#f3ded3] text-[#73391f]"}`} role="status">{notice.message}</div> : null}
-      {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} herds={workspaceData.herds} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onLocationUpdate={updateHorseLocation} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : <Dashboard communicationFilter={communicationFilter} fieldFilter={fieldFilter} fields={workspaceData.fields} filteredHorses={filteredHorseItems} herdFilter={herdFilter} herds={workspaceData.herds} horses={horseItems} isStaff={isStaff} profile={profile} onCommunicationFilter={setCommunicationFilter} onFieldFilter={setFieldFilter} onHerdFilter={setHerdFilter} onOpenHorse={(horseId) => void openHorse(horseId)} />}
+      {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} herdOptions={herdOptions} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onLocationUpdate={updateHorseLocation} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : <Dashboard communicationFilter={communicationFilter} fieldFilter={fieldFilter} fields={workspaceData.fields} filteredHorses={filteredHorseItems} herdFilter={herdFilter} herdOptions={herdOptions} horses={horseItems} isStaff={isStaff} profile={profile} onCommunicationFilter={setCommunicationFilter} onFieldFilter={setFieldFilter} onHerdFilter={setHerdFilter} onOpenHorse={(horseId) => void openHorse(horseId)} />}
     </main>
   </div>;
 }
@@ -307,7 +317,7 @@ interface DashboardProps {
   readonly fields: readonly Field[];
   readonly filteredHorses: readonly HorseDashboardItem[];
   readonly herdFilter: string;
-  readonly herds: readonly Herd[];
+  readonly herdOptions: readonly HerdOption[];
   readonly horses: readonly HorseDashboardItem[];
   readonly isStaff: boolean;
   readonly profile: Profile;
@@ -317,7 +327,7 @@ interface DashboardProps {
   readonly onOpenHorse: (horseId: string) => void;
 }
 
-function Dashboard({ communicationFilter, fieldFilter, fields, filteredHorses, herdFilter, herds, horses, isStaff, profile, onCommunicationFilter, onFieldFilter, onHerdFilter, onOpenHorse }: DashboardProps): React.JSX.Element {
+function Dashboard({ communicationFilter, fieldFilter, fields, filteredHorses, herdFilter, herdOptions, horses, isStaff, profile, onCommunicationFilter, onFieldFilter, onHerdFilter, onOpenHorse }: DashboardProps): React.JSX.Element {
   const attentionCount = horses.filter((item) => item.needsStaffCommunication).length;
   const recentlyUpdatedCount = horses.length - attentionCount;
 
@@ -333,7 +343,7 @@ function Dashboard({ communicationFilter, fieldFilter, fields, filteredHorses, h
     {isStaff ? <section className="mb-4 grid grid-cols-3 gap-2 rounded-xl border border-[#dedfd8] bg-[#fffdf8] p-2 sm:mb-6 sm:flex sm:flex-wrap sm:gap-3 sm:rounded-2xl sm:p-4" aria-label="Horse filters">
       <select aria-label="Filter by staff contact" className={selectInput} onChange={(event) => onCommunicationFilter(event.target.value as CommunicationFilter)} value={communicationFilter}><option value="all">All horses</option><option value="attention">Needs contact</option><option value="recent">Recent contact</option></select>
       <select aria-label="Filter by field" className={selectInput} onChange={(event) => onFieldFilter(event.target.value)} value={fieldFilter}><option value="">All fields</option>{fields.map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select>
-      <select aria-label="Filter by herd" className={selectInput} onChange={(event) => onHerdFilter(event.target.value)} value={herdFilter}><option value="">All herds</option>{herds.map((herd) => <option key={herd.id} value={herd.id}>{herd.name}</option>)}</select>
+      <select aria-label="Filter by herd" className={selectInput} onChange={(event) => onHerdFilter(event.target.value)} value={herdFilter}><option value="">All herds</option>{herdOptions.map((herd) => <option key={herd.id} value={herd.id}>{herd.label}</option>)}</select>
     </section> : null}
 
     {filteredHorses.length > 0 ? <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4" aria-label="Horses">{filteredHorses.map((item) => <HorseCard item={item} key={item.horse.id} onOpen={() => onOpenHorse(item.horse.id)} />)}</section> : <section className="rounded-3xl border border-dashed border-[#bfc6bf] bg-[#fffdf8] p-10 text-center"><h2 className="mb-2 font-serif text-3xl">No horses to show</h2><p className="mb-0 text-[#68736b]">{horses.length === 0 ? "An administrator can add the first horse in Setup." : "Try clearing one of the filters."}</p></section>}
@@ -364,7 +374,7 @@ function HorseLocationBox({ label, value }: { readonly label: "Field" | "Herd"; 
 
 interface HorseWorkspaceProps {
   readonly fields: readonly Field[];
-  readonly herds: readonly Herd[];
+  readonly herdOptions: readonly HerdOption[];
   readonly horseItem: HorseDashboardItem;
   readonly participants: Readonly<Record<string, ChatParticipant>>;
   readonly profile: Profile;
@@ -373,7 +383,7 @@ interface HorseWorkspaceProps {
   readonly onMessageSent: (createdAt: string) => void;
 }
 
-function HorseWorkspace({ fields, herds, horseItem, participants, profile, onBack, onLocationUpdate, onMessageSent }: HorseWorkspaceProps): React.JSX.Element {
+function HorseWorkspace({ fields, herdOptions, horseItem, participants, profile, onBack, onLocationUpdate, onMessageSent }: HorseWorkspaceProps): React.JSX.Element {
   const [isEditingLocation, setIsEditingLocation] = useState(false);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const communication = communicationPresentation(horseItem.daysSinceStaffCommunication);
@@ -397,7 +407,7 @@ function HorseWorkspace({ fields, herds, horseItem, participants, profile, onBac
     <button className={`${secondaryButton} mb-5`} onClick={onBack} type="button"><ArrowLeft size={16} />All horses</button>
     <section className="mb-7 grid overflow-hidden rounded-[2rem] bg-[#1d3528] text-white shadow-xl md:grid-cols-[minmax(16rem,0.8fr)_1.2fr]">
       <div className="aspect-[4/3] bg-[#385943] md:aspect-auto">{horseItem.thumbnailUrl ? <Image alt={horseItem.horse.name} className="h-full min-h-64 w-full object-cover" height={700} src={horseItem.thumbnailUrl} unoptimized width={900} /> : <div className="grid h-full min-h-64 place-items-center font-serif text-8xl text-[#9fb0a3]">{horseItem.horse.name.slice(0, 1).toUpperCase()}</div>}</div>
-      <div className="p-7 sm:p-9"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><p className="mb-0 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]">Horse information</p><span className={`rounded-full px-3 py-1 text-xs font-bold ${communication.className}`}>{communication.label}</span></div><h1 className="mb-5 font-serif text-5xl">{horseItem.horse.name}</h1><div className="grid gap-3 sm:grid-cols-2"><HorseInformationTile label="Field" value={horseItem.fieldName} /><HorseInformationTile label="Herd" value={horseItem.herdName} /><HorseInformationTile label="Type" value={horseItem.horse.horse_type || "Not entered"} /><HorseInformationTile label="Born" value={horseItem.horse.birth_year?.toString() ?? "Not entered"} /></div>{profile.role === "admin" ? <button className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 text-sm font-bold text-white" onClick={() => setIsEditingLocation((currentValue) => !currentValue)} type="button"><MapPin size={16} />Change field or herd</button> : null}{isEditingLocation ? <form className="mt-4 grid gap-3 rounded-2xl bg-white/10 p-4 sm:grid-cols-2" onSubmit={(event) => void saveLocation(event)}><label className="text-xs font-bold">Field<select className="mt-1 min-h-11 w-full rounded-xl bg-white px-3 text-sm text-[#1d3528]" defaultValue={horseItem.horse.field_id ?? ""} name="fieldId"><option value="">Unassigned</option>{fields.filter((field) => field.is_active).map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select></label><label className="text-xs font-bold">Herd<select className="mt-1 min-h-11 w-full rounded-xl bg-white px-3 text-sm text-[#1d3528]" defaultValue={horseItem.horse.herd_id ?? ""} name="herdId"><option value="">Unassigned</option>{herds.filter((herd) => herd.is_active).map((herd) => <option key={herd.id} value={herd.id}>{herd.name}</option>)}</select></label><button className="min-h-11 rounded-full bg-[#d9a27b] px-4 text-sm font-bold text-[#1d3528] sm:col-span-2" disabled={isSavingLocation} type="submit">{isSavingLocation ? "Saving…" : "Save field and herd"}</button></form> : null}</div>
+      <div className="p-7 sm:p-9"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><p className="mb-0 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]">Horse information</p><span className={`rounded-full px-3 py-1 text-xs font-bold ${communication.className}`}>{communication.label}</span></div><h1 className="mb-5 font-serif text-5xl">{horseItem.horse.name}</h1><div className="grid gap-3 sm:grid-cols-2"><HorseInformationTile label="Field" value={horseItem.fieldName} /><HorseInformationTile label="Herd" value={horseItem.herdName} /><HorseInformationTile label="Type" value={horseItem.horse.horse_type || "Not entered"} /><HorseInformationTile label="Born" value={horseItem.horse.birth_year?.toString() ?? "Not entered"} /></div>{profile.role === "admin" ? <button className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 text-sm font-bold text-white" onClick={() => setIsEditingLocation((currentValue) => !currentValue)} type="button"><MapPin size={16} />Change field or herd</button> : null}{isEditingLocation ? <form className="mt-4 grid gap-3 rounded-2xl bg-white/10 p-4 sm:grid-cols-2" onSubmit={(event) => void saveLocation(event)}><label className="text-xs font-bold">Field<select className="mt-1 min-h-11 w-full rounded-xl bg-white px-3 text-sm text-[#1d3528]" defaultValue={horseItem.horse.field_id ?? ""} name="fieldId"><option value="">Unassigned</option>{fields.filter((field) => field.is_active).map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select></label><label className="text-xs font-bold">Herd membership<select className="mt-1 min-h-11 w-full rounded-xl bg-white px-3 text-sm text-[#1d3528]" defaultValue={horseItem.horse.herd_id ?? ""} name="herdId"><option value="">Remove from herd</option>{herdOptions.map((herd) => <option key={herd.id} value={herd.id}>{herd.label}</option>)}</select></label><button className="min-h-11 rounded-full bg-[#d9a27b] px-4 text-sm font-bold text-[#1d3528] sm:col-span-2" disabled={isSavingLocation} type="submit">{isSavingLocation ? "Saving…" : "Save field and herd"}</button></form> : null}</div>
     </section>
 
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">

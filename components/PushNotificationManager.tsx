@@ -42,6 +42,15 @@ export function PushNotificationManager({ unreadMessageCount, userId }: PushNoti
       });
   }, []);
 
+  useEffect(() => {
+    if (!message) {
+      return;
+    }
+
+    const dismissalTimer = window.setTimeout(() => setMessage(null), 4_000);
+    return () => window.clearTimeout(dismissalTimer);
+  }, [message]);
+
   async function enableNotifications(): Promise<void> {
     if (!supabase || !vapidPublicKey) {
       setMessage("Push notifications will be available after setup is connected.");

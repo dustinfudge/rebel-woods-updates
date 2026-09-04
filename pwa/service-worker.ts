@@ -1,7 +1,12 @@
 interface RebelWoodsNotificationPayload {
+  readonly badgeCount?: number;
   readonly title: string;
   readonly body: string;
   readonly url?: string;
+}
+
+interface WorkerNavigatorWithApplicationBadging {
+  readonly setAppBadge?: (contents?: number) => Promise<void>;
 }
 
 const CACHE_NAME = "rebel-woods-shell-v1";
@@ -13,7 +18,9 @@ function isNotificationPayload(value: unknown): value is RebelWoodsNotificationP
   }
 
   const candidate = value as Record<string, unknown>;
-  return typeof candidate.title === "string" && typeof candidate.body === "string";
+  const hasValidBadgeCount = candidate.badgeCount === undefined
+    || (typeof candidate.badgeCount === "number" && Number.isInteger(candidate.badgeCount) && candidate.badgeCount >= 0);
+  return typeof candidate.title === "string" && typeof candidate.body === "string" && hasValidBadgeCount;
 }
 
 serviceWorker.addEventListener("install", (event: ExtendableEvent): void => {
@@ -55,14 +62,19 @@ serviceWorker.addEventListener("push", (event: PushEvent): void => {
     return;
   }
 
-  event.waitUntil(
+  const pushTasks: Promise<unknown>[] = [
     serviceWorker.registration.showNotification(receivedPayload.title, {
       body: receivedPayload.body,
       icon: `${serviceWorker.registration.scope}icon-192.png`,
       badge: `${serviceWorker.registration.scope}icon-192.png`,
       data: { url: receivedPayload.url ?? serviceWorker.registration.scope },
     }),
-  );
+  ];
+  const workerNavigator = serviceWorker.navigator as WorkerNavigator & WorkerNavigatorWithApplicationBadging;
+  if (receivedPayload.badgeCount !== undefined && workerNavigator.setAppBadge) {
+    pushTasks.push(workerNavigator.setAppBadge(receivedPayload.badgeCount));
+  }
+  event.waitUntil(Promise.all(pushTasks));
 });
 
 serviceWorker.addEventListener("notificationclick", (event: NotificationEvent): void => {
@@ -76,5 +88,14 @@ serviceWorker.addEventListener("notificationclick", (event: NotificationEvent): 
       ? notificationData.url
       : serviceWorker.registration.scope;
 
-  event.waitUntil(serviceWorker.clients.openWindow(targetUrl));
+  event.waitUntil(
+    serviceWorker.clients.matchAll({ includeUncontrolled: true, type: "window" }).then(async (windowClients) => {
+      const openApplication = windowClients.find((client) => client.url.startsWith(serviceWorker.registration.scope));
+      if (openApplication) {
+        await openApplication.navigate(targetUrl);
+        return openApplication.focus();
+      }
+      return serviceWorker.clients.openWindow(targetUrl);
+    }),
+  );
 });

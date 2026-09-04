@@ -1,7 +1,7 @@
 "use client";
 
 import type { RealtimePostgresInsertPayload } from "@supabase/supabase-js";
-import { AlertCircle, ArrowLeft, Bell, LogOut, MapPin, MessageCircle, Pill, Settings, ShieldAlert } from "lucide-react";
+import { AlertCircle, ArrowLeft, Bell, LogOut, MapPin, Pill, Settings, ShieldAlert } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -9,9 +9,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatParticipant } from "@/components/ChatWindow";
 import { ConversationTimeline } from "@/components/ConversationTimeline";
 import { HerdBoard } from "@/components/HerdBoard";
+import { PushNotificationManager } from "@/components/PushNotificationManager";
 import { StaffAlertBoard } from "@/components/StaffAlertBoard";
+import { synchronizeApplicationBadge } from "@/lib/applicationBadge";
 import { getPagesBasePath } from "@/lib/environment";
-import { getHorseNotificationCounts } from "@/lib/notifications";
+import { getHorseNotificationCounts, getUnreadReplyCount } from "@/lib/notifications";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import type { Tables } from "@/types/supabase";
 
@@ -125,7 +127,7 @@ export function AppWorkspace(): React.JSX.Element {
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState<WorkspaceNotice | null>(null);
 
-  const loadWorkspace = useCallback(async (currentProfile: Profile, refreshThumbnails = false): Promise<void> => {
+  const loadWorkspace = useCallback(async (currentProfile: Profile, refreshThumbnails = false): Promise<WorkspaceData> => {
     const client = getSupabaseBrowserClient();
     const alertHistoryCutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
     const [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult] = await Promise.all([
@@ -144,7 +146,7 @@ export function AppWorkspace(): React.JSX.Element {
     const firstError = [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult].map((result) => result.error).find((error) => error !== null);
     if (firstError) throw firstError;
     const horses = horsesResult.data ?? [];
-    setWorkspaceData({
+    const loadedWorkspaceData: WorkspaceData = {
       horses,
       fields: fieldsResult.data ?? [],
       herds: herdsResult.data ?? [],
@@ -156,8 +158,10 @@ export function AppWorkspace(): React.JSX.Element {
       notifications: notificationsResult.data ?? [],
       staffAlerts: staffAlertsResult.data ?? [],
       staffAlertAcknowledgements: alertAcknowledgementsResult.data ?? [],
-    });
+    };
+    setWorkspaceData(loadedWorkspaceData);
     if (refreshThumbnails) setThumbnailUrls(await signedThumbnailUrls(horses));
+    return loadedWorkspaceData;
   }, []);
 
   useEffect(() => {
@@ -173,7 +177,24 @@ export function AppWorkspace(): React.JSX.Element {
         if (profileError) throw profileError;
         if (!currentProfile?.is_active) throw new Error("This Rebel Woods account is not active.");
         setProfile(currentProfile);
-        await loadWorkspace(currentProfile, true);
+        const loadedWorkspace = await loadWorkspace(currentProfile, true);
+        const requestedHorseId = new URL(window.location.href).searchParams.get("horse");
+        if (requestedHorseId && loadedWorkspace.horses.some((horse) => horse.id === requestedHorseId)) {
+          setSelectedHorseId(requestedHorseId);
+          const { error: notificationError } = await client
+            .from("notifications")
+            .update({ read_at: new Date().toISOString() })
+            .eq("user_id", currentProfile.id)
+            .eq("horse_id", requestedHorseId)
+            .is("read_at", null);
+          if (!notificationError) {
+            setWorkspaceData((currentData) => ({
+              ...currentData,
+              notifications: currentData.notifications.filter((notification) => notification.horse_id !== requestedHorseId),
+            }));
+          }
+          window.history.replaceState({}, "", `${getPagesBasePath()}/`);
+        }
       } catch (error: unknown) {
         setNotice({ tone: "error", message: errorMessage(error) });
       } finally {
@@ -201,6 +222,18 @@ export function AppWorkspace(): React.JSX.Element {
           setWorkspaceData((currentData) => currentData.notifications.some((notification) => notification.id === payload.new.id)
             ? currentData
             : { ...currentData, notifications: [payload.new, ...currentData.notifications] });
+        },
+      )
+      .on<Notification>(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${profile.id}` },
+        (payload): void => {
+          setWorkspaceData((currentData) => payload.new.read_at
+            ? { ...currentData, notifications: currentData.notifications.filter((notification) => notification.id !== payload.new.id) }
+            : {
+                ...currentData,
+                notifications: currentData.notifications.map((notification) => notification.id === payload.new.id ? payload.new : notification),
+              });
         },
       )
       .subscribe();
@@ -293,6 +326,11 @@ export function AppWorkspace(): React.JSX.Element {
     }), [communicationFilter, fieldFilter, herdFilter, horseItems]);
 
   const selectedHorse = horseItems.find((item) => item.horse.id === selectedHorseId) ?? null;
+  const unreadMessageCount = getUnreadReplyCount(workspaceData.notifications);
+
+  useEffect(() => {
+    void synchronizeApplicationBadge(unreadMessageCount);
+  }, [unreadMessageCount]);
   const participants = useMemo<Readonly<Record<string, ChatParticipant>>>(() => workspaceData.profiles.reduce<Record<string, ChatParticipant>>((people, person) => {
     people[person.id] = { id: person.id, displayName: person.full_name, roleLabel: roleLabel(person) };
     return people;
@@ -423,7 +461,7 @@ export function AppWorkspace(): React.JSX.Element {
 
   const isStaff = profile.role !== "owner";
   return <div className="min-h-screen bg-[#f7f3e9] pb-20 text-[#14261d]">
-    <header className="sticky top-0 z-20 border-b border-[#dedfd8] bg-[#fffdf8]/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-6xl items-center justify-between gap-3"><div><strong className="block font-serif text-xl">Rebel Woods</strong><small className="font-bold uppercase tracking-[0.14em] text-[#a65333]">{roleLabel(profile)}</small></div><div className="flex items-center gap-2">{profile.role === "admin" ? <a className={secondaryButton} href={`${getPagesBasePath()}/setup/`}><Settings size={16} /><span className="hidden sm:inline">Setup</span></a> : null}<button aria-label="Sign out" className="grid h-10 w-10 place-items-center rounded-full border border-[#dedfd8] bg-white" onClick={() => void getSupabaseBrowserClient().auth.signOut()} type="button"><LogOut size={17} /></button></div></div></header>
+    <header className="sticky top-0 z-20 border-b border-[#dedfd8] bg-[#fffdf8]/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-6xl items-center justify-between gap-3"><div><strong className="block font-serif text-xl">Rebel Woods</strong><small className="font-bold uppercase tracking-[0.14em] text-[#a65333]">{roleLabel(profile)}</small></div><div className="flex items-center gap-2"><PushNotificationManager unreadMessageCount={unreadMessageCount} userId={profile.id} />{profile.role === "admin" ? <a className={secondaryButton} href={`${getPagesBasePath()}/setup/`}><Settings size={16} /><span className="hidden sm:inline">Setup</span></a> : null}<button aria-label="Sign out" className="grid h-10 w-10 place-items-center rounded-full border border-[#dedfd8] bg-white" onClick={() => void synchronizeApplicationBadge(0).finally(() => getSupabaseBrowserClient().auth.signOut())} type="button"><LogOut size={17} /></button></div></div></header>
     <main className="mx-auto max-w-6xl px-4 py-7 sm:px-5 sm:py-10">
       {notice ? <div className={`mb-5 rounded-2xl border p-4 text-sm font-semibold ${notice.tone === "success" ? "border-[#b8c9bb] bg-[#e4ece4] text-[#1d3528]" : "border-[#e1b8a6] bg-[#f3ded3] text-[#73391f]"}`} role="status">{notice.message}</div> : null}
       {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onFieldUpdate={updateHorseField} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : isManagingHerds && profile.role === "admin" ? <HerdBoard fields={workspaceData.fields} herds={workspaceData.herds.map((herd) => ({ fieldId: herd.field_id, id: herd.id, name: herd.name }))} horses={horseItems.map((item) => ({ herdId: item.horse.herd_id, id: item.horse.id, name: item.horse.name, thumbnailUrl: item.thumbnailUrl }))} onBack={() => { setIsManagingHerds(false); setNotice(null); }} onCreateHerd={createHorseHerd} onMoveHerdField={updateHerdField} onMoveHorse={updateHorseHerd} /> : <Dashboard acknowledgements={workspaceData.staffAlertAcknowledgements} alerts={workspaceData.staffAlerts} communicationFilter={communicationFilter} fieldFilter={fieldFilter} fields={workspaceData.fields} filteredHorses={filteredHorseItems} herdFilter={herdFilter} herdOptions={herdOptions} horses={horseItems} isStaff={isStaff} people={workspaceData.profiles} profile={profile} onAcknowledgeAlert={acknowledgeStaffAlert} onCommunicationFilter={setCommunicationFilter} onCreateCustomAlert={createCustomStaffAlert} onFieldFilter={setFieldFilter} onHerdFilter={setHerdFilter} onManageHerds={() => { setIsManagingHerds(true); setNotice(null); }} onOpenHorse={(horseId) => void openHorse(horseId)} onRemoveCustomAlert={removeCustomStaffAlert} />}
@@ -483,7 +521,7 @@ function HorseCard({ item, onOpen }: HorseCardProps): React.JSX.Element {
     <div className="relative aspect-[5/4] overflow-hidden bg-[#dfe5df] sm:aspect-[4/3]">
       {item.thumbnailUrl ? <Image alt={`${item.horse.name} thumbnail`} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" decoding="async" height={540} loading="lazy" src={item.thumbnailUrl} unoptimized width={720} /> : <div className="grid h-full place-items-center font-serif text-4xl text-[#789080] sm:text-6xl">{item.horse.name.slice(0, 1).toUpperCase()}</div>}
       <span aria-label={`${communication.label} since last staff contact`} className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[10px] font-bold shadow-sm sm:bottom-auto sm:left-3 sm:top-3 sm:px-3 sm:text-xs ${communication.className}`}>{communication.label}</span>
-      {item.unreadReplyCount > 0 ? <span aria-label={`${item.unreadReplyCount} unread ${item.unreadReplyCount === 1 ? "reply" : "replies"}`} className="absolute right-2 top-2 inline-flex min-h-7 items-center justify-center gap-1 rounded-full bg-[#1f5f8b] px-2 text-[10px] font-extrabold text-white shadow-lg ring-2 ring-white"><MessageCircle aria-hidden="true" size={13} />{item.unreadReplyCount === 1 ? "New reply" : `${item.unreadReplyCount} replies`}</span> : item.unreadAlertCount > 0 ? <span aria-label={`${item.unreadAlertCount} unread care ${item.unreadAlertCount === 1 ? "alert" : "alerts"}`} className="absolute right-2 top-2 inline-flex min-h-7 min-w-7 items-center justify-center rounded-full bg-[#f6e8c9] px-2 text-[10px] font-extrabold text-[#75520e] shadow-lg ring-2 ring-white"><Bell aria-hidden="true" className="mr-1" size={13} />{item.unreadAlertCount}</span> : null}
+      {item.unreadReplyCount > 0 ? <span aria-label={`${item.unreadReplyCount} unread ${item.unreadReplyCount === 1 ? "message" : "messages"}`} className="absolute right-2 top-2 inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#1f5f8b] px-2 text-xs font-extrabold text-white shadow-lg ring-2 ring-white">{item.unreadReplyCount}</span> : item.unreadAlertCount > 0 ? <span aria-label={`${item.unreadAlertCount} unread care ${item.unreadAlertCount === 1 ? "alert" : "alerts"}`} className="absolute right-2 top-2 inline-flex min-h-7 min-w-7 items-center justify-center rounded-full bg-[#f6e8c9] px-2 text-[10px] font-extrabold text-[#75520e] shadow-lg ring-2 ring-white"><Bell aria-hidden="true" className="mr-1" size={13} />{item.unreadAlertCount}</span> : null}
     </div>
     <span className="block p-3 sm:p-5"><strong className="mb-2 block truncate font-serif text-xl sm:text-3xl">{item.horse.name}</strong><span className="grid grid-cols-2 gap-1.5"><HorseLocationBox label="Field" value={item.fieldName} /><HorseLocationBox label="Herd" value={item.herdName} /></span>{hasSpecialRequirements ? <span className="mt-2 flex items-center gap-1.5 rounded-lg border-2 border-[#a65333] bg-[#f3ded3] px-2 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.06em] text-[#73391f] sm:mt-4 sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2 sm:text-xs"><ShieldAlert aria-hidden="true" size={16} /><span className="sm:hidden">Special</span><span className="hidden sm:inline">Special requirements</span></span> : null}{item.activeMedications.length > 0 ? <span className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-[#f6e8c9] px-2 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.06em] text-[#75520e] sm:mt-2 sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2 sm:text-xs"><Pill aria-hidden="true" size={15} /><span className="sm:hidden">Medication</span><span className="hidden sm:inline">Current medication</span></span> : null}</span>
   </button>;

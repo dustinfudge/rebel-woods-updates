@@ -7,6 +7,10 @@ export interface HorseNotificationCounts {
   readonly otherCount: number;
 }
 
+export function getUnreadReplyCount(notifications: readonly Notification[]): number {
+  return notifications.filter((notification) => notification.kind === "reply" && notification.read_at === null).length;
+}
+
 export function getHorseNotificationCounts(
   notifications: readonly Notification[],
   horseId: string,

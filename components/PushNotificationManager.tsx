@@ -4,9 +4,11 @@ import { Bell, BellOff } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { getSupabasePublicConfiguration } from "@/lib/environment";
+import { synchronizeApplicationBadge } from "@/lib/applicationBadge";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 export interface PushNotificationManagerProps {
+  readonly unreadMessageCount: number;
   readonly userId: string;
 }
 
@@ -17,7 +19,7 @@ function decodeUrlBase64(value: string): ArrayBuffer {
   return Uint8Array.from(decoded, (character) => character.charCodeAt(0)).buffer;
 }
 
-export function PushNotificationManager({ userId }: PushNotificationManagerProps): React.JSX.Element {
+export function PushNotificationManager({ unreadMessageCount, userId }: PushNotificationManagerProps): React.JSX.Element | null {
   const [isSupported, setIsSupported] = useState(false);
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -84,6 +86,7 @@ export function PushNotificationManager({ userId }: PushNotificationManagerProps
     }
 
     setSubscription(nextSubscription);
+    await synchronizeApplicationBadge(unreadMessageCount);
     setMessage("Push notifications are on for this device.");
   }
 
@@ -96,20 +99,20 @@ export function PushNotificationManager({ userId }: PushNotificationManagerProps
     await subscription.unsubscribe();
     await supabase.from("push_subscriptions").delete().eq("user_id", userId).eq("endpoint", endpoint);
     setSubscription(null);
+    await synchronizeApplicationBadge(0);
     setMessage("Push notifications are off for this device.");
   }
 
   if (!isSupported) {
-    return <p className="text-sm text-[#68736b]">Push notifications are not supported on this device.</p>;
+    return null;
   }
 
   return (
-    <div>
-      <button className="inline-flex items-center gap-2 rounded-full bg-[#1d3528] px-4 py-3 text-sm font-bold text-white" type="button" onClick={() => void (subscription ? disableNotifications() : enableNotifications())}>
+    <div className="relative">
+      <button aria-label={subscription ? "Turn off push notifications" : "Turn on push notifications"} className={`grid h-10 w-10 place-items-center rounded-full border ${subscription ? "border-[#1f5f8b] bg-[#e1eff8] text-[#1f5f8b]" : "border-[#dedfd8] bg-white text-[#385943]"}`} title={subscription ? "Push notifications are on" : "Turn on push notifications"} type="button" onClick={() => void (subscription ? disableNotifications() : enableNotifications())}>
         {subscription ? <BellOff aria-hidden="true" size={17} /> : <Bell aria-hidden="true" size={17} />}
-        {subscription ? "Turn off push notifications" : "Turn on push notifications"}
       </button>
-      {message ? <p className="mt-2 text-xs text-[#68736b]" role="status">{message}</p> : null}
+      {message ? <p className="absolute right-0 top-12 z-30 w-64 rounded-xl border border-[#dedfd8] bg-white p-3 text-xs font-semibold leading-5 text-[#385943] shadow-xl" role="status">{message}</p> : null}
     </div>
   );
 }

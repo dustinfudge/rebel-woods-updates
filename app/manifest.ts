@@ -8,6 +8,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Rebel Woods Horse Care",
     short_name: "Rebel Woods",
+    id: `${basePath}/`,
     description: "Private horse care information and continuous conversations.",
     start_url: `${basePath}/`,
     scope: `${basePath}/`,

@@ -66,6 +66,16 @@ In the repository Pages settings, select **GitHub Actions** as the publishing so
 
 ## Push delivery
 
-The app stores each opted-in device in `push_subscriptions`. Database triggers create notification records for conversation messages, care changes, and medication changes. A Supabase Edge Function and database webhook must send those records using the private VAPID key; that private delivery step is configured when the Supabase project is connected.
+The app stores each opted-in device in `push_subscriptions`. Conversation messages create notification records, and `send-push-notification` delivers those records to opted-in devices. Each payload includes the recipient's unread message count and a direct link to the relevant horse conversation.
+
+Configure these Edge Function secrets:
+
+- `VAPID_PUBLIC_KEY`
+- `VAPID_PRIVATE_KEY`
+- `VAPID_SUBJECT`, such as `mailto:updates@rebelwoods.com`
+- `PWA_BASE_URL`, such as `https://dustinfudge.github.io/rebel-woods-updates/`
+- `PUSH_WEBHOOK_SECRET`, a long random value used only by the database webhook
+
+Deploy `send-push-notification` without JWT verification. Create a Database Webhook for `INSERT` events on `public.notifications`, target the deployed Edge Function, and add the `x-push-webhook-secret` header. Store the same public VAPID key in the GitHub Actions secret `NEXT_PUBLIC_VAPID_PUBLIC_KEY`.
 
 Conversation retention is configured per organization. The cleanup function removes expired conversation messages and their storage objects while preserving care information, medication history, access, and last-staff-contact dates. Do not schedule the function until its deployment and a dry-run review are complete.

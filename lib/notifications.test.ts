@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getHorseNotificationCounts } from "./notifications";
+import { getHorseNotificationCounts, getUnreadReplyCount } from "./notifications";
 import type { Tables } from "../types/supabase";
 
 type Notification = Tables<"notifications">;
@@ -41,5 +41,17 @@ describe("horse notification counts", () => {
     ];
 
     expect(getHorseNotificationCounts(notifications, "horse-1")).toEqual({ replyCount: 0, otherCount: 0 });
+  });
+});
+
+describe("application notification count", () => {
+  it("counts only unread conversation replies", () => {
+    const notifications = [
+      notification({ id: "reply-1", kind: "reply" }),
+      notification({ id: "reply-2", kind: "reply", read_at: "2026-09-02T12:05:00.000Z" }),
+      notification({ id: "care-1", kind: "care_change" }),
+    ];
+
+    expect(getUnreadReplyCount(notifications)).toBe(1);
   });
 });

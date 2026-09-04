@@ -20,12 +20,6 @@ interface StaffAlertBoardProps {
   readonly onRemoveCustomAlert: (alertId: string) => Promise<boolean>;
 }
 
-const alertTimeFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
-
-function formattedTime(timestamp: string): string {
-  return alertTimeFormatter.format(new Date(timestamp));
-}
-
 export function StaffAlertBoard({ acknowledgements, alerts, currentProfile, people, onAcknowledge, onCreateCustomAlert, onRemoveCustomAlert }: StaffAlertBoardProps): React.JSX.Element {
   const [isAddingAlert, setIsAddingAlert] = useState(false);
   const [isShowingHistory, setIsShowingHistory] = useState(false);
@@ -73,7 +67,7 @@ export function StaffAlertBoard({ acknowledgements, alerts, currentProfile, peop
       </span>
     </div>
 
-    {isAddingAlert && !isShowingHistory ? <form className="mb-3 rounded-2xl bg-white p-3 text-[#1d3528]" onSubmit={(event) => void createCustomAlert(event)}><label className="block text-xs font-bold">Message for administrators and Rebel Wranglers<textarea autoFocus className="mt-2 min-h-24 w-full resize-y rounded-xl border border-[#cfd4ce] p-3 text-sm font-normal outline-none focus:border-[#385943]" maxLength={8000} name="message" placeholder="Enter an operational reminder or change everyone should acknowledge." required /></label><div className="mt-2 flex justify-end gap-2"><button className="min-h-9 rounded-full px-3 text-xs font-bold text-[#68736b]" onClick={() => setIsAddingAlert(false)} type="button">Cancel</button><button className="min-h-9 rounded-full bg-[#1d3528] px-4 text-xs font-bold text-white disabled:opacity-50" disabled={isCreatingAlert} type="submit">{isCreatingAlert ? "Adding…" : "Add alert"}</button></div></form> : null}
+    {isAddingAlert && !isShowingHistory ? <form className="mb-3 rounded-2xl bg-white p-3 text-[#1d3528]" onSubmit={(event) => void createCustomAlert(event)}><label className="block text-xs font-bold">Message for administrators and Rebel Wranglers<textarea autoFocus className="mt-2 min-h-24 w-full resize-y rounded-xl border border-[#cfd4ce] p-3 text-sm font-normal outline-none focus:border-[#385943]" maxLength={8000} name="message" placeholder="Enter an operational reminder or change everyone should read." required /></label><div className="mt-2 flex justify-end gap-2"><button className="min-h-9 rounded-full px-3 text-xs font-bold text-[#68736b]" onClick={() => setIsAddingAlert(false)} type="button">Cancel</button><button className="min-h-9 rounded-full bg-[#1d3528] px-4 text-xs font-bold text-white disabled:opacity-50" disabled={isCreatingAlert} type="submit">{isCreatingAlert ? "Adding…" : "Add alert"}</button></div></form> : null}
 
     <div className="max-h-[30rem] space-y-2 overflow-y-auto pr-1" aria-live="polite">
       {displayedAlerts.map((alert) => <StaffAlertCard
@@ -117,12 +111,12 @@ function StaffAlertCard({ acknowledgements, alert, busy, currentProfile, histori
         <strong className="block leading-5">{alert.title}</strong>
         <p className="mb-0 mt-1 whitespace-pre-wrap text-sm leading-5 text-[#3f5147]">{alert.body}</p>
       </div>
-      {!historical ? currentAcknowledgement ? <span className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-full bg-[#edf0ed] px-3 text-[10px] font-bold text-[#68736b]"><Check size={13} />Acknowledged</span> : <button className={`min-h-9 shrink-0 rounded-full px-3 text-[10px] font-extrabold text-white shadow-sm disabled:opacity-50 ${urgent ? "bg-[#a13f22]" : "bg-[#1f5f8b]"}`} disabled={busy} onClick={onAcknowledge} type="button">{busy ? "Saving…" : "Acknowledge"}</button> : null}
+      {!historical ? currentAcknowledgement ? <span className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-full bg-[#edf0ed] px-3 text-[10px] font-bold text-[#68736b]"><Check size={13} />Got it</span> : <button className={`min-h-9 shrink-0 rounded-full px-3 text-[10px] font-extrabold text-white shadow-sm disabled:opacity-50 ${urgent ? "bg-[#a13f22]" : "bg-[#1f5f8b]"}`} disabled={busy} onClick={onAcknowledge} type="button">{busy ? "Saving…" : "Got it"}</button> : null}
     </div>
     <div className="mt-2 border-t border-[#dfe3df] pt-2 text-[10px] leading-4 text-[#68736b]">
-      <span>{actor?.full_name ?? "System"} · {formattedTime(alert.created_at)}</span>
+      <span>Changed by {actor?.full_name ?? "System"}</span>
       {historical ? <span className="ml-2 font-bold">{historyStatus}</span> : null}
-      <div>{acknowledgements.length > 0 ? `Read by ${acknowledgements.map((acknowledgement) => `${personById.get(acknowledgement.profile_id)?.full_name ?? "Staff"} at ${formattedTime(acknowledgement.acknowledged_at)}`).join(" · ")}` : "No acknowledgements yet"}</div>
+      <div>{acknowledgements.length > 0 ? acknowledgements.map((acknowledgement) => `${personById.get(acknowledgement.profile_id)?.full_name ?? "Staff"} · Read`).join("  ") : "Not read yet"}</div>
     </div>
     {alert.kind === "custom" && currentProfile.role === "admin" && !historical ? <button className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#8a432b] underline disabled:opacity-50" disabled={busy} onClick={onRemove} type="button"><Trash2 size={12} />Remove to history</button> : null}
   </article>;

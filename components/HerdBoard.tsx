@@ -33,13 +33,14 @@ interface HerdBoardProps {
   readonly herds: readonly HerdBoardHerd[];
   readonly horses: readonly HerdBoardHorse[];
   readonly onBack: () => void;
+  readonly onCreateHerd: (horseId: string) => Promise<boolean>;
   readonly onMoveHerdField: (herdId: string, fieldId: string | null) => Promise<boolean>;
   readonly onMoveHorse: (horseId: string, herdId: string | null) => Promise<boolean>;
 }
 
 const unassignedColumnId = "unassigned";
 
-export function HerdBoard({ fields, herds, horses, onBack, onMoveHerdField, onMoveHorse }: HerdBoardProps): React.JSX.Element {
+export function HerdBoard({ fields, herds, horses, onBack, onCreateHerd, onMoveHerdField, onMoveHorse }: HerdBoardProps): React.JSX.Element {
   const [selectedHorseId, setSelectedHorseId] = useState<string | null>(null);
   const [draggedHorseId, setDraggedHorseId] = useState<string | null>(null);
   const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
@@ -47,11 +48,13 @@ export function HerdBoard({ fields, herds, horses, onBack, onMoveHerdField, onMo
   const [savingHerdId, setSavingHerdId] = useState<string | null>(null);
 
   const columns = useMemo<readonly HerdColumn[]>(() => [
-    { fieldId: null, herdId: null, title: "Not in a herd" },
+    { fieldId: null, herdId: null, title: "Create New Herd" },
     ...herds.map((herd) => ({ fieldId: herd.fieldId, herdId: herd.id, title: herd.name })),
   ], [herds]);
 
   const selectedHorse = horses.find((horse) => horse.id === selectedHorseId) ?? null;
+  const selectedHorseHerdSize = selectedHorse ? horses.filter((horse) => horse.herdId === selectedHorse.herdId).length : 0;
+  const canCreateNewHerd = selectedHorse !== null && (selectedHorse.herdId === null || selectedHorseHerdSize > 1);
 
   async function moveHorse(horseId: string, destinationHerdId: string | null): Promise<void> {
     const horse = horses.find((candidate) => candidate.id === horseId);
@@ -63,6 +66,17 @@ export function HerdBoard({ fields, herds, horses, onBack, onMoveHerdField, onMo
     const wasMoved = await onMoveHorse(horseId, destinationHerdId);
     setSavingHorseId(null);
     if (wasMoved) setSelectedHorseId(null);
+  }
+
+  async function createHerd(horseId: string): Promise<void> {
+    if (savingHorseId) return;
+    const horse = horses.find((candidate) => candidate.id === horseId);
+    const currentHerdSize = horse ? horses.filter((candidate) => candidate.herdId === horse.herdId).length : 0;
+    if (!horse || (horse.herdId !== null && currentHerdSize <= 1)) return;
+    setSavingHorseId(horseId);
+    const wasCreated = await onCreateHerd(horseId);
+    setSavingHorseId(null);
+    if (wasCreated) setSelectedHorseId(null);
   }
 
   function columnIdentifier(herdId: string | null): string {
@@ -80,17 +94,18 @@ export function HerdBoard({ fields, herds, horses, onBack, onMoveHerdField, onMo
     <div className="mb-5 rounded-[2rem] bg-[#1d3528] p-6 text-white shadow-xl sm:p-8">
       <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]">Herd manager</p>
       <h1 className="mb-3 font-serif text-4xl sm:text-5xl">Build your horse groups.</h1>
-      <p className="mb-0 max-w-3xl leading-7 text-[#cdd9cf]">Drag a horse into another box. On a phone, tap a horse and then tap <strong>Move here</strong> in the destination herd. Changing a herd’s field moves every horse in that box together.</p>
+      <p className="mb-0 max-w-3xl leading-7 text-[#cdd9cf]">Drag a horse into another box. On a phone, tap a horse, then choose <strong>Create New Herd</strong> or <strong>Move here</strong> in another herd. Changing a herd’s field moves every horse in that box together.</p>
     </div>
 
-    {selectedHorse ? <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-[#b8c9bb] bg-[#e4ece4] px-4 py-3 text-sm text-[#1d3528]" role="status"><span><strong>{selectedHorse.name}</strong> selected. Choose a herd below.</span><button className="font-bold underline" onClick={() => setSelectedHorseId(null)} type="button">Cancel</button></div> : null}
+    {selectedHorse ? <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#b8c9bb] bg-[#e4ece4] px-4 py-3 text-sm text-[#1d3528]" role="status"><span><strong>{selectedHorse.name}</strong> selected. Choose where to move this horse.</span><span className="flex flex-wrap items-center gap-2">{canCreateNewHerd ? <button className="min-h-10 rounded-full bg-[#a65333] px-4 text-xs font-bold text-white disabled:opacity-60" disabled={savingHorseId !== null} onClick={() => void createHerd(selectedHorse.id)} type="button">{savingHorseId === selectedHorse.id ? "Creating…" : "Create New Herd"}</button> : null}<button className="min-h-10 px-2 font-bold underline" onClick={() => setSelectedHorseId(null)} type="button">Cancel</button></span></div> : null}
 
     <div className="flex snap-x gap-4 overflow-x-auto pb-5" aria-label="Herd groups">
       {columns.map((column) => {
         const columnId = columnIdentifier(column.herdId);
         const columnHorses = horses.filter((horse) => horse.herdId === column.herdId).sort((left, right) => left.name.localeCompare(right.name));
         const isDropTarget = activeColumnId === columnId;
-        const canMoveSelectedHorse = selectedHorse !== null && selectedHorse.herdId !== column.herdId;
+        const isCreateHerdColumn = column.herdId === null;
+        const canMoveSelectedHorse = selectedHorse !== null && !isCreateHerdColumn && selectedHorse.herdId !== column.herdId;
         return <section
           className={`min-h-72 w-[82vw] max-w-sm shrink-0 snap-start rounded-3xl border-2 p-4 transition sm:w-80 ${isDropTarget ? "border-[#a65333] bg-[#f3ded3]" : "border-[#cfd4ce] bg-[#fffdf8]"}`}
           key={columnId}
@@ -102,11 +117,12 @@ export function HerdBoard({ fields, herds, horses, onBack, onMoveHerdField, onMo
             const horseId = event.dataTransfer.getData("text/plain") || draggedHorseId;
             setActiveColumnId(null);
             setDraggedHorseId(null);
-            if (horseId) void moveHorse(horseId, column.herdId);
+            if (horseId) void (isCreateHerdColumn ? createHerd(horseId) : moveHorse(horseId, column.herdId));
           }}
         >
           <header className="mb-4 border-b border-[#dedfd8] pb-3">
             <div className="flex min-h-12 items-center justify-between gap-3"><span><strong className="block font-serif text-2xl text-[#1d3528]">{column.title}</strong><small className="font-bold text-[#68736b]">{columnHorses.length} {columnHorses.length === 1 ? "horse" : "horses"}</small></span>
+            {isCreateHerdColumn && selectedHorse && canCreateNewHerd ? <button className="min-h-10 rounded-full bg-[#a65333] px-4 text-xs font-bold text-white" disabled={savingHorseId !== null} onClick={() => void createHerd(selectedHorse.id)} type="button">Create herd</button> : null}
             {canMoveSelectedHorse ? <button className="min-h-10 rounded-full bg-[#1d3528] px-4 text-xs font-bold text-white" disabled={savingHorseId !== null} onClick={() => void moveHorse(selectedHorse.id, column.herdId)} type="button">Move here</button> : null}
             </div>
             {column.herdId ? <label className="mt-2 block text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#68736b]">Field<select aria-label={`${column.title} field`} className="mt-1 min-h-10 w-full rounded-xl border border-[#cfd4ce] bg-white px-3 text-sm font-bold normal-case tracking-normal text-[#385943]" disabled={savingHerdId !== null || columnHorses.length === 0} onChange={(event) => void moveHerdField(column.herdId as string, event.target.value || null)} value={column.fieldId ?? ""}><option value="">No field assigned</option>{fields.map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select></label> : null}
@@ -137,7 +153,7 @@ export function HerdBoard({ fields, herds, horses, onBack, onMoveHerdField, onMo
                 {isSaving ? <LoaderCircle className="animate-spin text-[#385943]" size={18} /> : isSelected ? <Check className="text-[#1f5f8b]" size={18} /> : <GripVertical className="text-[#829087]" size={20} />}
               </button>;
             })}
-            {columnHorses.length === 0 ? <div className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-[#cfd4ce] px-5 text-center text-sm font-semibold text-[#68736b]">Drop a horse here</div> : null}
+            {columnHorses.length === 0 ? <div className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-[#cfd4ce] px-5 text-center text-sm font-semibold text-[#68736b]">{isCreateHerdColumn ? "Drop a horse here to start its own herd" : "Drop a horse here"}</div> : null}
           </div>
         </section>;
       })}

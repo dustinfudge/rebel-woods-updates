@@ -513,6 +513,7 @@ export type Database = {
       is_admin: { Args: Record<PropertyKey, never>; Returns: boolean };
       is_staff: { Args: Record<PropertyKey, never>; Returns: boolean };
       acknowledge_staff_alert: { Args: { target_alert_id: string }; Returns: string };
+      create_herd_for_horse: { Args: { target_horse_id: string }; Returns: string };
       create_custom_staff_alert: { Args: { alert_message: string }; Returns: string };
       move_herd_to_field: { Args: { target_field_id: string | null; target_herd_id: string }; Returns: undefined };
       move_horse_to_field: { Args: { target_field_id: string | null; target_horse_id: string }; Returns: undefined };

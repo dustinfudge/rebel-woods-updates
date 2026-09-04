@@ -3,7 +3,7 @@
     "strict": true
   },
   "imports": {
-    "@mmmike/web-push/send": "npm:@mmmike/web-push@1.0.1/send",
+    "@mmmike/web-push/send": "npm:@mmmike/web-push@1.3.0/send",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.112.4"
   }
 }

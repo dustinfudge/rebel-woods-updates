@@ -119,7 +119,7 @@ export function PushNotificationManager({ unreadMessageCount, userId }: PushNoti
   return (
     <div className="relative">
       <button aria-label={subscription ? "Turn off push notifications" : "Turn on push notifications"} className={`grid h-10 w-10 place-items-center rounded-full border ${subscription ? "border-[#1f5f8b] bg-[#e1eff8] text-[#1f5f8b]" : "border-[#dedfd8] bg-white text-[#385943]"}`} title={subscription ? "Push notifications are on" : "Turn on push notifications"} type="button" onClick={() => void (subscription ? disableNotifications() : enableNotifications())}>
-        {subscription ? <BellOff aria-hidden="true" size={17} /> : <Bell aria-hidden="true" size={17} />}
+        {subscription ? <Bell aria-hidden="true" size={17} /> : <BellOff aria-hidden="true" size={17} />}
       </button>
       {message ? <p className="absolute right-0 top-12 z-30 w-64 rounded-xl border border-[#dedfd8] bg-white p-3 text-xs font-semibold leading-5 text-[#385943] shadow-xl" role="status">{message}</p> : null}
     </div>

@@ -11,7 +11,6 @@ import { ConversationTimeline } from "@/components/ConversationTimeline";
 import { HerdBoard } from "@/components/HerdBoard";
 import { StaffAlertBoard } from "@/components/StaffAlertBoard";
 import { getPagesBasePath } from "@/lib/environment";
-import { getHerdRosterLabel } from "@/lib/herds";
 import { getHorseNotificationCounts } from "@/lib/notifications";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import type { Tables } from "@/types/supabase";
@@ -222,8 +221,31 @@ export function AppWorkspace(): React.JSX.Element {
     return (): void => { void client.removeChannel(staffAlertsChannel); };
   }, [loadWorkspace, profile]);
 
+  useEffect(() => {
+    if (!profile) return;
+    const client = getSupabaseBrowserClient();
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleWorkspaceRefresh = (): void => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => { void loadWorkspace(profile); }, 150);
+    };
+    const operationsChannel = client
+      .channel(`workspace-operations:${profile.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "horses" }, scheduleWorkspaceRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "herds" }, scheduleWorkspaceRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "fields" }, scheduleWorkspaceRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "care_profiles" }, scheduleWorkspaceRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "horse_medications" }, scheduleWorkspaceRefresh)
+      .subscribe();
+    return (): void => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      void client.removeChannel(operationsChannel);
+    };
+  }, [loadWorkspace, profile]);
+
   const horseItems = useMemo<readonly HorseDashboardItem[]>(() => {
     const fieldNames = new Map(workspaceData.fields.map((field) => [field.id, field.name]));
+    const herdNames = new Map(workspaceData.herds.map((herd) => [herd.id, herd.name]));
     const careByHorse = new Map(workspaceData.careProfiles.map((careProfile) => [careProfile.horse_id, careProfile]));
     const conversationByHorse = new Map(workspaceData.conversations.map((conversation) => [conversation.horse_id, conversation]));
     const profileById = new Map(workspaceData.profiles.map((person) => [person.id, person]));
@@ -235,7 +257,7 @@ export function AppWorkspace(): React.JSX.Element {
       return [{
         horse,
         fieldName: horse.field_id ? fieldNames.get(horse.field_id) ?? "Unassigned" : "Unassigned",
-        herdName: getHerdRosterLabel(horse.herd_id, workspaceData.horses),
+        herdName: horse.herd_id ? herdNames.get(horse.herd_id) ?? "Unassigned" : "Unassigned",
         thumbnailUrl: horse.photo_path ? thumbnailUrls[horse.photo_path] ?? null : null,
         careProfile: careByHorse.get(horse.id) ?? null,
         activeMedications: workspaceData.medications.filter((medication) => medication.horse_id === horse.id && medication.status === "active"),
@@ -256,7 +278,7 @@ export function AppWorkspace(): React.JSX.Element {
 
   const herdOptions: readonly HerdOption[] = workspaceData.herds
     .filter((herd) => herd.is_active)
-    .map((herd) => ({ id: herd.id, label: getHerdRosterLabel(herd.id, workspaceData.horses) }))
+    .map((herd) => ({ id: herd.id, label: herd.name }))
     .sort((left, right) => left.label.localeCompare(right.label));
 
   const filteredHorseItems = useMemo<readonly HorseDashboardItem[]>(() => horseItems
@@ -390,7 +412,7 @@ export function AppWorkspace(): React.JSX.Element {
     <header className="sticky top-0 z-20 border-b border-[#dedfd8] bg-[#fffdf8]/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-6xl items-center justify-between gap-3"><div><strong className="block font-serif text-xl">Rebel Woods</strong><small className="font-bold uppercase tracking-[0.14em] text-[#a65333]">{roleLabel(profile)}</small></div><div className="flex items-center gap-2">{profile.role === "admin" ? <a className={secondaryButton} href={`${getPagesBasePath()}/setup/`}><Settings size={16} /><span className="hidden sm:inline">Setup</span></a> : null}<button aria-label="Sign out" className="grid h-10 w-10 place-items-center rounded-full border border-[#dedfd8] bg-white" onClick={() => void getSupabaseBrowserClient().auth.signOut()} type="button"><LogOut size={17} /></button></div></div></header>
     <main className="mx-auto max-w-6xl px-4 py-7 sm:px-5 sm:py-10">
       {notice ? <div className={`mb-5 rounded-2xl border p-4 text-sm font-semibold ${notice.tone === "success" ? "border-[#b8c9bb] bg-[#e4ece4] text-[#1d3528]" : "border-[#e1b8a6] bg-[#f3ded3] text-[#73391f]"}`} role="status">{notice.message}</div> : null}
-      {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onFieldUpdate={updateHorseField} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : isManagingHerds && profile.role === "admin" ? <HerdBoard fields={workspaceData.fields} herds={workspaceData.herds.map((herd) => ({ fieldId: herd.field_id, id: herd.id }))} horses={horseItems.map((item) => ({ herdId: item.horse.herd_id, id: item.horse.id, name: item.horse.name, thumbnailUrl: item.thumbnailUrl }))} onBack={() => { setIsManagingHerds(false); setNotice(null); }} onMoveHerdField={updateHerdField} onMoveHorse={updateHorseHerd} /> : <Dashboard acknowledgements={workspaceData.staffAlertAcknowledgements} alerts={workspaceData.staffAlerts} communicationFilter={communicationFilter} fieldFilter={fieldFilter} fields={workspaceData.fields} filteredHorses={filteredHorseItems} herdFilter={herdFilter} herdOptions={herdOptions} horses={horseItems} isStaff={isStaff} people={workspaceData.profiles} profile={profile} onAcknowledgeAlert={acknowledgeStaffAlert} onCommunicationFilter={setCommunicationFilter} onCreateCustomAlert={createCustomStaffAlert} onFieldFilter={setFieldFilter} onHerdFilter={setHerdFilter} onManageHerds={() => { setIsManagingHerds(true); setNotice(null); }} onOpenHorse={(horseId) => void openHorse(horseId)} onRemoveCustomAlert={removeCustomStaffAlert} />}
+      {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onFieldUpdate={updateHorseField} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : isManagingHerds && profile.role === "admin" ? <HerdBoard fields={workspaceData.fields} herds={workspaceData.herds.map((herd) => ({ fieldId: herd.field_id, id: herd.id, name: herd.name }))} horses={horseItems.map((item) => ({ herdId: item.horse.herd_id, id: item.horse.id, name: item.horse.name, thumbnailUrl: item.thumbnailUrl }))} onBack={() => { setIsManagingHerds(false); setNotice(null); }} onMoveHerdField={updateHerdField} onMoveHorse={updateHorseHerd} /> : <Dashboard acknowledgements={workspaceData.staffAlertAcknowledgements} alerts={workspaceData.staffAlerts} communicationFilter={communicationFilter} fieldFilter={fieldFilter} fields={workspaceData.fields} filteredHorses={filteredHorseItems} herdFilter={herdFilter} herdOptions={herdOptions} horses={horseItems} isStaff={isStaff} people={workspaceData.profiles} profile={profile} onAcknowledgeAlert={acknowledgeStaffAlert} onCommunicationFilter={setCommunicationFilter} onCreateCustomAlert={createCustomStaffAlert} onFieldFilter={setFieldFilter} onHerdFilter={setHerdFilter} onManageHerds={() => { setIsManagingHerds(true); setNotice(null); }} onOpenHorse={(horseId) => void openHorse(horseId)} onRemoveCustomAlert={removeCustomStaffAlert} />}
     </main>
   </div>;
 }

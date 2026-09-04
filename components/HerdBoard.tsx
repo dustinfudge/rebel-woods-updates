@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 interface HerdBoardHerd {
   readonly fieldId: string | null;
   readonly id: string;
+  readonly name: string;
 }
 
 interface HerdBoardField {
@@ -47,7 +48,7 @@ export function HerdBoard({ fields, herds, horses, onBack, onMoveHerdField, onMo
 
   const columns = useMemo<readonly HerdColumn[]>(() => [
     { fieldId: null, herdId: null, title: "Not in a herd" },
-    ...herds.map((herd, index) => ({ fieldId: herd.fieldId, herdId: herd.id, title: `Herd ${index + 1}` })),
+    ...herds.map((herd) => ({ fieldId: herd.fieldId, herdId: herd.id, title: herd.name })),
   ], [herds]);
 
   const selectedHorse = horses.find((horse) => horse.id === selectedHorseId) ?? null;

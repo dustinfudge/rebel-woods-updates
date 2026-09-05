@@ -120,6 +120,7 @@ export function AppWorkspace(): React.JSX.Element {
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData>(emptyWorkspaceData);
   const [thumbnailUrls, setThumbnailUrls] = useState<Readonly<Record<string, string>>>({});
   const [selectedHorseId, setSelectedHorseId] = useState<string | null>(null);
+  const [shouldFocusConversation, setShouldFocusConversation] = useState(false);
   const [communicationFilter, setCommunicationFilter] = useState<CommunicationFilter>("all");
   const [fieldFilter, setFieldFilter] = useState("");
   const [herdFilter, setHerdFilter] = useState("");
@@ -178,9 +179,11 @@ export function AppWorkspace(): React.JSX.Element {
         if (!currentProfile?.is_active) throw new Error("This Rebel Woods account is not active.");
         setProfile(currentProfile);
         const loadedWorkspace = await loadWorkspace(currentProfile, true);
-        const requestedHorseId = new URL(window.location.href).searchParams.get("horse");
+        const requestedUrl = new URL(window.location.href);
+        const requestedHorseId = requestedUrl.searchParams.get("horse");
         if (requestedHorseId && loadedWorkspace.horses.some((horse) => horse.id === requestedHorseId)) {
           setSelectedHorseId(requestedHorseId);
+          setShouldFocusConversation(requestedUrl.searchParams.get("view") === "conversation");
           const { error: notificationError } = await client
             .from("notifications")
             .update({ read_at: new Date().toISOString() })
@@ -331,6 +334,16 @@ export function AppWorkspace(): React.JSX.Element {
   useEffect(() => {
     void synchronizeApplicationBadge(unreadMessageCount);
   }, [unreadMessageCount]);
+
+  useEffect(() => {
+    if (isLoading || !selectedHorseId || !shouldFocusConversation) return;
+
+    const scrollFrame = window.requestAnimationFrame(() => {
+      document.getElementById("horse-conversation")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setShouldFocusConversation(false);
+    });
+    return (): void => window.cancelAnimationFrame(scrollFrame);
+  }, [isLoading, selectedHorseId, shouldFocusConversation]);
   const participants = useMemo<Readonly<Record<string, ChatParticipant>>>(() => workspaceData.profiles.reduce<Record<string, ChatParticipant>>((people, person) => {
     people[person.id] = { id: person.id, displayName: person.full_name, roleLabel: roleLabel(person) };
     return people;

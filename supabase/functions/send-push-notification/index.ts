@@ -105,7 +105,10 @@ const pushNotificationHandler = withSupabase({ auth: "none" }, async (request, c
   const unreadMessageCount = unreadCountResult.count ?? 1;
   const baseUrl = new URL(applicationUrl);
   const destinationUrl = new URL(baseUrl.href);
-  if (notification.horse_id) destinationUrl.searchParams.set("horse", notification.horse_id);
+  if (notification.horse_id) {
+    destinationUrl.searchParams.set("horse", notification.horse_id);
+    destinationUrl.searchParams.set("view", "conversation");
+  }
   const pushMessage = rawPayload(JSON.stringify({
     badgeCount: unreadMessageCount,
     body: notification.body,

@@ -287,7 +287,7 @@ export function ConversationTimeline({ conversationId, currentUserId, horseId, h
     setIsSending(false);
   }
 
-  return <section className="flex min-h-[36rem] flex-col overflow-hidden rounded-3xl border border-[#dedfd8] bg-[#fffdf8]" aria-label={`${horseName} conversation`}>
+  return <section className="flex min-h-[36rem] scroll-mt-20 flex-col overflow-hidden rounded-3xl border border-[#dedfd8] bg-[#fffdf8]" aria-label={`${horseName} conversation`} id="horse-conversation">
     <header className="border-b border-[#dedfd8] px-5 py-4"><h2 className="mb-1 font-serif text-2xl">{horseName}’s conversation</h2><p className="mb-0 text-xs text-[#68736b]">Messages, photos, and videos stay together in one continuous thread.</p></header>
     <div className="max-h-[65vh] flex-1 space-y-4 overflow-y-auto p-4 sm:p-5" ref={timelineRef} aria-live="polite">
       {isLoading ? <p className="rounded-2xl bg-[#f7f3e9] p-5 text-center text-sm text-[#68736b]">Loading conversation…</p> : null}

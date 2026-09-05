@@ -1,6 +1,6 @@
 "use client";
 
-import { BellRing, Check, ChevronDown, ChevronUp, History, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { Archive, BellRing, Check, ChevronDown, ChevronUp, History, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
 import { getHistoricalStaffAlerts, getOverviewStaffAlerts } from "@/lib/staffAlerts";
@@ -16,18 +16,18 @@ interface StaffAlertBoardProps {
   readonly currentProfile: Profile;
   readonly people: readonly Profile[];
   readonly onAcknowledge: (alertId: string) => Promise<boolean>;
+  readonly onArchiveAlert: (alertId: string) => Promise<boolean>;
   readonly onCreateCustomAlert: (message: string) => Promise<boolean>;
-  readonly onRemoveCustomAlert: (alertId: string) => Promise<boolean>;
+  readonly onDeleteAlert: (alertId: string) => Promise<boolean>;
 }
 
-export function StaffAlertBoard({ acknowledgements, alerts, currentProfile, people, onAcknowledge, onCreateCustomAlert, onRemoveCustomAlert }: StaffAlertBoardProps): React.JSX.Element {
+export function StaffAlertBoard({ acknowledgements, alerts, currentProfile, people, onAcknowledge, onArchiveAlert, onCreateCustomAlert, onDeleteAlert }: StaffAlertBoardProps): React.JSX.Element {
   const [isAddingAlert, setIsAddingAlert] = useState(false);
   const [isShowingHistory, setIsShowingHistory] = useState(false);
   const [busyAlertId, setBusyAlertId] = useState<string | null>(null);
   const [isCreatingAlert, setIsCreatingAlert] = useState(false);
-  const now = new Date();
-  const overviewAlerts = getOverviewStaffAlerts(alerts, now);
-  const historicalAlerts = getHistoricalStaffAlerts(alerts, now);
+  const overviewAlerts = getOverviewStaffAlerts(alerts);
+  const historicalAlerts = getHistoricalStaffAlerts(alerts);
   const displayedAlerts = isShowingHistory ? historicalAlerts : overviewAlerts;
 
   async function acknowledge(alertId: string): Promise<void> {
@@ -36,9 +36,16 @@ export function StaffAlertBoard({ acknowledgements, alerts, currentProfile, peop
     setBusyAlertId(null);
   }
 
-  async function removeCustomAlert(alertId: string): Promise<void> {
+  async function archiveAlert(alertId: string): Promise<void> {
     setBusyAlertId(alertId);
-    await onRemoveCustomAlert(alertId);
+    await onArchiveAlert(alertId);
+    setBusyAlertId(null);
+  }
+
+  async function deleteAlert(alertId: string): Promise<void> {
+    if (!window.confirm("Permanently delete this alert? This cannot be undone.")) return;
+    setBusyAlertId(alertId);
+    await onDeleteAlert(alertId);
     setBusyAlertId(null);
   }
 
@@ -60,7 +67,7 @@ export function StaffAlertBoard({ acknowledgements, alerts, currentProfile, peop
 
   return <div className="min-w-0 rounded-3xl bg-white/10 p-3 sm:p-4">
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <span><strong className="flex items-center gap-2 text-lg"><BellRing size={19} />Stable alerts</strong><small className="text-[#cdd9cf]">Rolling 14-day changes · {overviewAlerts.length} current</small></span>
+      <span><strong className="flex items-center gap-2 text-lg"><BellRing size={19} />Stable alerts</strong><small className="text-[#cdd9cf]">{overviewAlerts.length} current · Admin moves alerts to history</small></span>
       <span className="flex flex-wrap gap-2">
         {currentProfile.role === "admin" && !isShowingHistory ? <button className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-white px-3 text-xs font-bold text-[#1d3528]" onClick={() => setIsAddingAlert((currentValue) => !currentValue)} type="button"><Plus size={14} />Add alert</button> : null}
         <button className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-white/30 bg-white/10 px-3 text-xs font-bold text-white" onClick={() => setIsShowingHistory((currentValue) => !currentValue)} type="button"><History size={14} />{isShowingHistory ? "Current alerts" : "View history"}{isShowingHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
@@ -79,7 +86,8 @@ export function StaffAlertBoard({ acknowledgements, alerts, currentProfile, peop
         key={alert.id}
         people={people}
         onAcknowledge={() => void acknowledge(alert.id)}
-        onRemove={() => void removeCustomAlert(alert.id)}
+        onArchive={() => void archiveAlert(alert.id)}
+        onDelete={() => void deleteAlert(alert.id)}
       />)}
       {displayedAlerts.length === 0 ? <div className="rounded-2xl bg-white/10 px-4 py-8 text-center"><Check className="mx-auto mb-2 text-[#b8d2bd]" size={28} /><strong className="block">{isShowingHistory ? "No alert history yet." : "Everything is up to date."}</strong>{!isShowingHistory ? <small className="text-[#cdd9cf]">New stable changes will appear here.</small> : null}</div> : null}
     </div>
@@ -94,20 +102,30 @@ interface StaffAlertCardProps {
   readonly historical: boolean;
   readonly people: readonly Profile[];
   readonly onAcknowledge: () => void;
-  readonly onRemove: () => void;
+  readonly onArchive: () => void;
+  readonly onDelete: () => void;
 }
 
-function StaffAlertCard({ acknowledgements, alert, busy, currentProfile, historical, people, onAcknowledge, onRemove }: StaffAlertCardProps): React.JSX.Element {
+const alertDateFormatter = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" });
+
+function firstName(fullName: string): string {
+  return fullName.trim().split(/\s+/)[0] ?? fullName;
+}
+
+function StaffAlertCard({ acknowledgements, alert, busy, currentProfile, historical, people, onAcknowledge, onArchive, onDelete }: StaffAlertCardProps): React.JSX.Element {
   const personById = new Map(people.map((person) => [person.id, person]));
   const actor = alert.changed_by ? personById.get(alert.changed_by) : null;
   const currentAcknowledgement = acknowledgements.find((acknowledgement) => acknowledgement.profile_id === currentProfile.id);
   const urgent = alert.priority === "urgent";
-  const historyStatus = alert.removed_at ? "Removed" : alert.superseded_at ? "Replaced by a newer change" : "Older than 14 days";
+  const alertDate = alertDateFormatter.format(new Date(alert.created_at));
 
   return <article className={`rounded-2xl border p-3 text-[#14261d] ${urgent ? "border-[#e5a48d] bg-[#fff0e9]" : "border-white/70 bg-white"}`}>
+    <div className="mb-2 flex items-start justify-between gap-3">
+      <p className={`mb-0 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] ${urgent ? "text-[#a13f22]" : "text-[#68736b]"}`}>{urgent ? <TriangleAlert size={14} /> : null}{urgent ? "Urgent care change" : alert.kind === "custom" ? "Staff notice" : "Stable change"}</p>
+      <time className="shrink-0 text-xs font-extrabold text-[#385943]" dateTime={alert.created_at}>{alertDate}</time>
+    </div>
     <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
       <div className="min-w-0">
-        <p className={`mb-1 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] ${urgent ? "text-[#a13f22]" : "text-[#68736b]"}`}>{urgent ? <TriangleAlert size={14} /> : null}{urgent ? "Urgent care change" : alert.kind === "custom" ? "Staff notice" : "Stable change"}</p>
         <strong className="block leading-5">{alert.title}</strong>
         <p className="mb-0 mt-1 whitespace-pre-wrap text-sm leading-5 text-[#3f5147]">{alert.body}</p>
       </div>
@@ -115,9 +133,10 @@ function StaffAlertCard({ acknowledgements, alert, busy, currentProfile, histori
     </div>
     <div className="mt-2 border-t border-[#dfe3df] pt-2 text-[10px] leading-4 text-[#68736b]">
       <span>Changed by {actor?.full_name ?? "System"}</span>
-      {historical ? <span className="ml-2 font-bold">{historyStatus}</span> : null}
-      <div>{acknowledgements.length > 0 ? acknowledgements.map((acknowledgement) => `${personById.get(acknowledgement.profile_id)?.full_name ?? "Staff"} · Read`).join("  ") : "Not read yet"}</div>
+      {historical ? <span className="ml-2 font-bold">Moved to history</span> : null}
+      <div>{acknowledgements.length > 0 ? acknowledgements.map((acknowledgement) => `${firstName(personById.get(acknowledgement.profile_id)?.full_name ?? "Staff")} · Read`).join("  ") : "Not read yet"}</div>
     </div>
-    {alert.kind === "custom" && currentProfile.role === "admin" && !historical ? <button className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#8a432b] underline disabled:opacity-50" disabled={busy} onClick={onRemove} type="button"><Trash2 size={12} />Remove to history</button> : null}
+    {currentProfile.role === "admin" && !historical ? <button className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#8a432b] underline disabled:opacity-50" disabled={busy} onClick={onArchive} type="button"><Archive size={12} />Remove to history</button> : null}
+    {currentProfile.role === "admin" && historical ? <button className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#8a432b] underline disabled:opacity-50" disabled={busy} onClick={onDelete} type="button"><Trash2 size={12} />Permanently remove alert</button> : null}
   </article>;
 }

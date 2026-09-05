@@ -1,5 +1,5 @@
 import { rawPayload, sendPushNotification } from "@mmmike/web-push/send";
-import { createClient } from "@supabase/supabase-js";
+import { withSupabase } from "@supabase/server";
 
 interface NotificationRecord {
   readonly body: string;
@@ -40,19 +40,6 @@ function parseWebhookPayload(value: unknown): NotificationWebhookPayload | null 
   return { type: "INSERT", schema: "public", table: "notifications", record: { id: value.record.id } };
 }
 
-function configuredSecretKey(): string | null {
-  const secretKeysValue = Deno.env.get("SUPABASE_SECRET_KEYS");
-  if (secretKeysValue) {
-    try {
-      const parsedSecretKeys: unknown = JSON.parse(secretKeysValue);
-      if (isRecord(parsedSecretKeys) && typeof parsedSecretKeys.default === "string") return parsedSecretKeys.default;
-    } catch {
-      return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? null;
-    }
-  }
-  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? null;
-}
-
 function isTrustedPushEndpoint(endpoint: string): boolean {
   try {
     const endpointUrl = new URL(endpoint);
@@ -73,7 +60,7 @@ function jsonResponse(status: number, body: Readonly<Record<string, unknown>>): 
   return Response.json(body, { status });
 }
 
-Deno.serve(async (request: Request): Promise<Response> => {
+const pushNotificationHandler = withSupabase({ auth: "none" }, async (request, context): Promise<Response> => {
   if (request.method !== "POST") return jsonResponse(405, { error: "Method not allowed." });
 
   const configuredWebhookSecret = Deno.env.get("PUSH_WEBHOOK_SECRET");
@@ -85,17 +72,15 @@ Deno.serve(async (request: Request): Promise<Response> => {
   const payload = parseWebhookPayload(await request.json().catch((): null => null));
   if (!payload) return jsonResponse(400, { error: "Invalid notification webhook payload." });
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const secretKey = configuredSecretKey();
   const vapidPublicKey = Deno.env.get("VAPID_PUBLIC_KEY");
   const vapidPrivateKey = Deno.env.get("VAPID_PRIVATE_KEY");
   const vapidSubject = Deno.env.get("VAPID_SUBJECT");
   const applicationUrl = Deno.env.get("PWA_BASE_URL");
-  if (!supabaseUrl || !secretKey || !vapidPublicKey || !vapidPrivateKey || !vapidSubject || !applicationUrl) {
+  if (!vapidPublicKey || !vapidPrivateKey || !vapidSubject || !applicationUrl) {
     return jsonResponse(500, { error: "Push delivery configuration is incomplete." });
   }
 
-  const supabase = createClient(supabaseUrl, secretKey, { auth: { persistSession: false } });
+  const supabase = context.supabaseAdmin;
   const notificationResult = await supabase
     .from("notifications")
     .select("id,user_id,horse_id,kind,title,body,push_sent_at")
@@ -158,3 +143,5 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
   return jsonResponse(200, { delivered: deliveredCount, failed: failedCount, removedSubscriptions: expiredSubscriptionIds.length });
 });
+
+Deno.serve(pushNotificationHandler);

@@ -4,6 +4,6 @@
   },
   "imports": {
     "@mmmike/web-push/send": "npm:@mmmike/web-push@1.3.0/send",
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.112.4"
+    "@supabase/server": "jsr:@supabase/server@^1"
   }
 }

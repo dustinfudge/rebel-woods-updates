@@ -121,10 +121,9 @@ export function HerdBoard({ fields, herds, horses, onBack, onCreateHerd, onMoveH
           }}
         >
           <header className="mb-4 border-b border-[#dedfd8] pb-3">
-            <div className="flex min-h-12 items-center justify-between gap-3"><span><strong className="block font-serif text-2xl text-[#1d3528]">{column.title}</strong><small className="font-bold text-[#68736b]">{columnHorses.length} {columnHorses.length === 1 ? "horse" : "horses"}</small></span>
-            {isCreateHerdColumn && selectedHorse && canCreateNewHerd ? <button className="min-h-10 rounded-full bg-[#a65333] px-4 text-xs font-bold text-white" disabled={savingHorseId !== null} onClick={() => void createHerd(selectedHorse.id)} type="button">Create herd</button> : null}
-            {canMoveSelectedHorse ? <button className="min-h-10 rounded-full bg-[#1d3528] px-4 text-xs font-bold text-white" disabled={savingHorseId !== null} onClick={() => void moveHorse(selectedHorse.id, column.herdId)} type="button">Move here</button> : null}
-            </div>
+            <div className="min-h-12"><span className="min-w-0"><strong className="block break-words font-serif text-2xl leading-tight text-[#1d3528]">{column.title}</strong><small className="font-bold text-[#68736b]">{columnHorses.length} {columnHorses.length === 1 ? "horse" : "horses"}</small></span></div>
+            {isCreateHerdColumn && selectedHorse && canCreateNewHerd ? <button className="mt-3 min-h-11 w-full rounded-full bg-[#a65333] px-4 text-sm font-bold text-white disabled:opacity-60" disabled={savingHorseId !== null} onClick={() => void createHerd(selectedHorse.id)} type="button">Create New Herd for {selectedHorse.name}</button> : null}
+            {canMoveSelectedHorse ? <button className="mt-3 min-h-11 w-full rounded-full bg-[#1d3528] px-4 text-sm font-bold text-white disabled:opacity-60" disabled={savingHorseId !== null} onClick={() => void moveHorse(selectedHorse.id, column.herdId)} type="button">Move {selectedHorse.name} here</button> : null}
             {column.herdId ? <label className="mt-2 block text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#68736b]">Field<select aria-label={`${column.title} field`} className="mt-1 min-h-10 w-full rounded-xl border border-[#cfd4ce] bg-white px-3 text-sm font-bold normal-case tracking-normal text-[#385943]" disabled={savingHerdId !== null || columnHorses.length === 0} onChange={(event) => void moveHerdField(column.herdId as string, event.target.value || null)} value={column.fieldId ?? ""}><option value="">No field assigned</option>{fields.map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select></label> : null}
           </header>
 

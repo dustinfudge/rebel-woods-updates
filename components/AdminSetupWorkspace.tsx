@@ -51,6 +51,9 @@ const input = "min-h-12 w-full rounded-xl border border-[#cfd4ce] bg-white px-4 
 const area = `${input} min-h-24 resize-y py-3 leading-6`;
 const primary = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#1d3528] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50";
 const secondary = "inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#cfd4ce] bg-white px-4 py-2 text-sm font-bold text-[#385943] disabled:opacity-50";
+const maximumThumbnailDimension = 1_200;
+const maximumThumbnailSourceBytes = 25 * 1024 * 1024;
+const supportedThumbnailTypes = new Set(["image/heic", "image/heif", "image/jpeg", "image/png", "image/webp"]);
 
 function value(formData: FormData, name: string): string {
   const formValue = formData.get(name);
@@ -88,6 +91,45 @@ function horseInformationFrom(formData: FormData): HorseInformationUpdate {
 function thumbnailFileFrom(formData: FormData): File | null {
   const file = formData.get("thumbnail");
   return file instanceof File && file.size > 0 ? file : null;
+}
+
+function loadThumbnailImage(objectUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = (): void => resolve(image);
+    image.onerror = (): void => reject(new Error("This photo could not be opened. Please choose a JPG, PNG, WebP, HEIC, or HEIF image."));
+    image.src = objectUrl;
+  });
+}
+
+function canvasJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("This photo could not be prepared for upload. Please choose a different photo."));
+    }, "image/jpeg", 0.82);
+  });
+}
+
+async function prepareThumbnailUpload(file: File): Promise<Blob> {
+  if (file.size > maximumThumbnailSourceBytes) throw new Error("Choose a photo that is 25 MB or smaller.");
+  if (!supportedThumbnailTypes.has(file.type)) throw new Error("Choose a JPG, PNG, WebP, HEIC, or HEIF image.");
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await loadThumbnailImage(objectUrl);
+    const longestDimension = Math.max(image.naturalWidth, image.naturalHeight);
+    const scale = Math.min(1, maximumThumbnailDimension / longestDimension);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("This browser could not prepare the photo. Please try a different photo.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return await canvasJpeg(canvas);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function roleLabel(role: AppRole): string {
@@ -274,16 +316,21 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     const thumbnail = thumbnailFileFrom(formData);
     await mutate(async () => {
       const client = getSupabaseBrowserClient();
-      const { error: informationError } = await client.from("horses").update(horseInformationFrom(formData)).eq("id", selectedHorse.id);
-      if (informationError) throw informationError;
+      const informationUpdate = horseInformationFrom(formData);
       if (thumbnail) {
-        if (thumbnail.size > 10 * 1024 * 1024) throw new Error("The thumbnail must be 10 MB or smaller.");
-        if (!["image/jpeg", "image/png", "image/webp", "image/heic"].includes(thumbnail.type)) throw new Error("Choose a JPG, PNG, WebP, or HEIC image.");
-        const storagePath = `${profile.organization_id}/${selectedHorse.id}/thumbnail`;
-        const { error: uploadError } = await client.storage.from("horse-thumbnails").upload(storagePath, thumbnail, { contentType: thumbnail.type, upsert: true });
+        const preparedThumbnail = await prepareThumbnailUpload(thumbnail);
+        const storagePath = `${profile.organization_id}/${selectedHorse.id}/${crypto.randomUUID()}.jpg`;
+        const { error: uploadError } = await client.storage.from("horse-thumbnails").upload(storagePath, preparedThumbnail, { contentType: "image/jpeg", upsert: false });
         if (uploadError) throw uploadError;
-        const { error: photoPathError } = await client.from("horses").update({ photo_path: storagePath }).eq("id", selectedHorse.id);
-        if (photoPathError) throw photoPathError;
+        const { error: informationError } = await client.from("horses").update({ ...informationUpdate, photo_path: storagePath }).eq("id", selectedHorse.id);
+        if (informationError) {
+          await client.storage.from("horse-thumbnails").remove([storagePath]);
+          throw informationError;
+        }
+        if (selectedHorse.photo_path) await client.storage.from("horse-thumbnails").remove([selectedHorse.photo_path]);
+      } else {
+        const { error: informationError } = await client.from("horses").update(informationUpdate).eq("id", selectedHorse.id);
+        if (informationError) throw informationError;
       }
       await refresh(`${selectedHorse.name}’s information card was updated.`, thumbnail !== null);
     });
@@ -466,7 +513,7 @@ function HorseInformationFields({ horse }: { readonly horse?: Horse }): React.JS
 }
 
 function HorseInformationCard({ horse, ownerContacts, saving, onUpdate }: { readonly horse: HorseView; readonly ownerContacts: readonly { readonly owner: Profile; readonly relationship: Relationship }[]; readonly saving: boolean; readonly onUpdate: (event: FormEvent<HTMLFormElement>) => Promise<void> }): React.JSX.Element {
-  return <Card title={`${horse.name}’s information card`} description="Identity, health contacts, schedules, and owner contacts"><form className="space-y-4" key={horse.updated_at} onSubmit={(event) => void onUpdate(event)}><div className="flex flex-col gap-4 rounded-2xl bg-[#f7f3e9] p-4 sm:flex-row sm:items-center">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-24 w-24 shrink-0 rounded-2xl bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-24 w-24 shrink-0 place-items-center rounded-2xl bg-[#1d3528] font-serif text-3xl text-white">{horse.name[0]}</span>}<Label name="Thumbnail photo"><input accept="image/jpeg,image/png,image/webp,image/heic" capture="environment" className="block w-full text-sm file:mr-3 file:rounded-full file:border-0 file:bg-[#e4ece4] file:px-4 file:py-2 file:font-bold file:text-[#385943]" name="thumbnail" type="file" /></Label></div><HorseInformationFields horse={horse} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save information card</button></form><div className="mt-6 border-t border-[#dedfd8] pt-5"><h4 className="mb-3 font-serif text-xl">Owners and family</h4>{ownerContacts.length === 0 ? <Empty>Connect an owner in People & access to show their contact information here.</Empty> : <div className="grid gap-3 sm:grid-cols-2">{ownerContacts.map(({ owner, relationship }) => <address className="rounded-xl border border-[#dedfd8] bg-white p-4 text-sm not-italic" key={owner.id}><strong className="block">{owner.full_name}</strong><span className="mb-2 block text-xs text-[#68736b]">{relationship === "primary_owner" ? "Primary owner" : "Authorized family"}</span><a className="block font-bold text-[#385943] underline" href={`mailto:${owner.email}`}>{owner.email}</a>{owner.phone ? <a className="mt-1 block font-bold text-[#385943] underline" href={`tel:${owner.phone}`}>{owner.phone}</a> : <span className="mt-1 block text-[#68736b]">Phone not added</span>}</address>)}</div>}</div></Card>;
+  return <Card title={`${horse.name}’s information card`} description="Identity, health contacts, schedules, and owner contacts"><form className="space-y-4" key={horse.updated_at} onSubmit={(event) => void onUpdate(event)}><div className="flex flex-col gap-4 rounded-2xl bg-[#f7f3e9] p-4 sm:flex-row sm:items-center">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-24 w-24 shrink-0 rounded-2xl bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-24 w-24 shrink-0 place-items-center rounded-2xl bg-[#1d3528] font-serif text-3xl text-white">{horse.name[0]}</span>}<Label name="Thumbnail photo"><input accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" className="block w-full text-sm file:mr-3 file:rounded-full file:border-0 file:bg-[#e4ece4] file:px-4 file:py-2 file:font-bold file:text-[#385943]" name="thumbnail" type="file" /></Label></div><HorseInformationFields horse={horse} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save information card</button></form><div className="mt-6 border-t border-[#dedfd8] pt-5"><h4 className="mb-3 font-serif text-xl">Owners and family</h4>{ownerContacts.length === 0 ? <Empty>Connect an owner in People & access to show their contact information here.</Empty> : <div className="grid gap-3 sm:grid-cols-2">{ownerContacts.map(({ owner, relationship }) => <address className="rounded-xl border border-[#dedfd8] bg-white p-4 text-sm not-italic" key={owner.id}><strong className="block">{owner.full_name}</strong><span className="mb-2 block text-xs text-[#68736b]">{relationship === "primary_owner" ? "Primary owner" : "Authorized family"}</span><a className="block font-bold text-[#385943] underline" href={`mailto:${owner.email}`}>{owner.email}</a>{owner.phone ? <a className="mt-1 block font-bold text-[#385943] underline" href={`tel:${owner.phone}`}>{owner.phone}</a> : <span className="mt-1 block text-[#68736b]">Phone not added</span>}</address>)}</div>}</div></Card>;
 }
 
 function MedicationCard({ horse, saving, onAdd, onComplete }: { readonly horse: HorseView; readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void>; readonly onComplete: (medication: Medication) => Promise<void> }): React.JSX.Element {

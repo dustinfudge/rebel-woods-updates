@@ -509,9 +509,9 @@ function FieldsHerdsOverview({ fields, horses, isAdmin, onManage }: FieldsHerdsO
   });
 
   return <section className="mb-4 rounded-2xl bg-[#1d3528] p-4 text-white shadow-xl sm:mb-6 sm:rounded-[2rem] sm:p-5" aria-labelledby="fields-herds-heading">
-    <div className="mb-3 flex items-center justify-between gap-3">
-      <h2 className="mb-0 font-serif text-2xl text-white" id="fields-herds-heading">Fields/Herds</h2>
-      {isAdmin ? <button className={secondaryButton} onClick={onManage} type="button"><MapPin size={16} />Manage fields &amp; herds</button> : null}
+    <div className="mb-3">
+      <h2 className="mb-0 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]" id="fields-herds-heading">Fields / Herds</h2>
+      {isAdmin ? <button className="mt-3 inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-full border border-white/40 bg-transparent px-4 text-xs font-bold text-white transition hover:bg-white/10" onClick={onManage} type="button"><MapPin size={15} />Manage fields &amp; herds</button> : null}
     </div>
     {occupiedFields.length > 0 ? <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4">{occupiedFields.map(({ field, horseNames }) => <article className="rounded-xl border border-white/20 bg-white/10 p-3" key={field.id}><strong className="mb-1.5 block text-sm text-[#f1bd98]">{field.name}</strong><p className="mb-0 text-xs leading-5 text-[#e2ebe4]">{horseNames.join(", ")}</p></article>)}</div> : <p className="mb-0 rounded-xl bg-white/10 p-3 text-sm text-[#cdd9cf]">No horses are assigned to a field.</p>}
   </section>;

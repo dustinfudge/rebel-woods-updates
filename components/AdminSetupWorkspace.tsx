@@ -46,6 +46,12 @@ interface Notice {
   message: string;
 }
 
+interface PreparedThumbnailUpload {
+  body: ArrayBuffer | Blob;
+  contentType: "image/heic" | "image/jpeg";
+  extension: "heic" | "jpg";
+}
+
 const emptyData: SetupData = { organization: null, fields: [], herds: [], horses: [], care: [], profiles: [], access: [], medications: [] };
 const input = "min-h-12 w-full rounded-xl border border-[#cfd4ce] bg-white px-4 text-base outline-none focus:border-[#385943] focus:ring-2 focus:ring-[#385943]/10";
 const area = `${input} min-h-24 resize-y py-3 leading-6`;
@@ -111,22 +117,27 @@ function canvasJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-async function prepareThumbnailUpload(file: File): Promise<Blob> {
+async function prepareThumbnailUpload(file: File): Promise<PreparedThumbnailUpload> {
   if (file.size > maximumThumbnailSourceBytes) throw new Error("Choose a photo that is 25 MB or smaller.");
   if (!supportedThumbnailTypes.has(file.type)) throw new Error("Choose a JPG, PNG, WebP, HEIC, or HEIF image.");
 
   const objectUrl = URL.createObjectURL(file);
   try {
-    const image = await loadThumbnailImage(objectUrl);
-    const longestDimension = Math.max(image.naturalWidth, image.naturalHeight);
-    const scale = Math.min(1, maximumThumbnailDimension / longestDimension);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("This browser could not prepare the photo. Please try a different photo.");
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return await canvasJpeg(canvas);
+    try {
+      const image = await loadThumbnailImage(objectUrl);
+      const longestDimension = Math.max(image.naturalWidth, image.naturalHeight);
+      const scale = Math.min(1, maximumThumbnailDimension / longestDimension);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("This browser could not prepare the photo. Please try a different photo.");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return { body: await canvasJpeg(canvas), contentType: "image/jpeg", extension: "jpg" };
+    } catch (error: unknown) {
+      if (file.type !== "image/heic" && file.type !== "image/heif") throw error;
+      return { body: await file.arrayBuffer(), contentType: "image/heic", extension: "heic" };
+    }
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
@@ -319,8 +330,8 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       const informationUpdate = horseInformationFrom(formData);
       if (thumbnail) {
         const preparedThumbnail = await prepareThumbnailUpload(thumbnail);
-        const storagePath = `${profile.organization_id}/${selectedHorse.id}/${crypto.randomUUID()}.jpg`;
-        const { error: uploadError } = await client.storage.from("horse-thumbnails").upload(storagePath, preparedThumbnail, { contentType: "image/jpeg", upsert: false });
+        const storagePath = `${profile.organization_id}/${selectedHorse.id}/${crypto.randomUUID()}.${preparedThumbnail.extension}`;
+        const { error: uploadError } = await client.storage.from("horse-thumbnails").upload(storagePath, preparedThumbnail.body, { contentType: preparedThumbnail.contentType, upsert: false });
         if (uploadError) throw uploadError;
         const { error: informationError } = await client.from("horses").update({ ...informationUpdate, photo_path: storagePath }).eq("id", selectedHorse.id);
         if (informationError) {

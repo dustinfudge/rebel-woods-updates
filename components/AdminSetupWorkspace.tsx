@@ -2,7 +2,7 @@
 
 import { AlertCircle, ArrowRight, CalendarClock, Check, LoaderCircle, LogOut, MapPin, Plus, ShieldCheck, Stethoscope, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { getPagesBasePath } from "@/lib/environment";
 import { getHerdRosterLabel } from "@/lib/herds";
@@ -92,11 +92,6 @@ function horseInformationFrom(formData: FormData): HorseInformationUpdate {
     deworming_schedule: value(formData, "dewormingSchedule"),
     vaccine_schedule: value(formData, "vaccineSchedule"),
   };
-}
-
-function thumbnailFileFrom(formData: FormData): File | null {
-  const file = formData.get("thumbnail");
-  return file instanceof File && file.size > 0 ? file : null;
 }
 
 function loadThumbnailImage(objectUrl: string): Promise<HTMLImageElement> {
@@ -260,10 +255,18 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     setNotice({ tone: "success", message: successMessage });
   }
 
-  async function mutate(action: () => Promise<void>): Promise<void> {
+  async function mutate(action: () => Promise<void>): Promise<boolean> {
     setSaving(true);
     setNotice(null);
-    try { await action(); } catch (error: unknown) { setNotice({ tone: "error", message: messageFrom(error) }); } finally { setSaving(false); }
+    try {
+      await action();
+      return true;
+    } catch (error: unknown) {
+      setNotice({ tone: "error", message: messageFrom(error) });
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function addLocation(event: FormEvent<HTMLFormElement>, kind: "field" | "herd"): Promise<void> {
@@ -326,18 +329,16 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     });
   }
 
-  async function updateHorseInformation(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function updateHorseInformation(event: FormEvent<HTMLFormElement>, thumbnail: PreparedThumbnailUpload | null): Promise<boolean> {
     event.preventDefault();
-    if (!profile || !selectedHorse) return;
+    if (!profile || !selectedHorse) return false;
     const formData = new FormData(event.currentTarget);
-    const thumbnail = thumbnailFileFrom(formData);
-    await mutate(async () => {
+    return await mutate(async () => {
       const client = getSupabaseBrowserClient();
       const informationUpdate = horseInformationFrom(formData);
       if (thumbnail) {
-        const preparedThumbnail = await prepareThumbnailUpload(thumbnail);
-        const storagePath = `${profile.organization_id}/${selectedHorse.id}/${crypto.randomUUID()}.${preparedThumbnail.extension}`;
-        const { error: uploadError } = await client.storage.from("horse-thumbnails").upload(storagePath, preparedThumbnail.body, { contentType: preparedThumbnail.contentType, upsert: false });
+        const storagePath = `${profile.organization_id}/${selectedHorse.id}/${crypto.randomUUID()}.${thumbnail.extension}`;
+        const { error: uploadError } = await client.storage.from("horse-thumbnails").upload(storagePath, thumbnail.body, { contentType: thumbnail.contentType, upsert: false });
         if (uploadError) throw uploadError;
         const { error: informationError } = await client.from("horses").update({ ...informationUpdate, photo_path: storagePath }).eq("id", selectedHorse.id);
         if (informationError) {
@@ -507,7 +508,8 @@ interface HorseSectionProps {
   access: readonly HorseAccess[]; horses: readonly HorseView[]; profiles: readonly Profile[]; saving: boolean; selectedHorse: HorseView | null;
   onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void>; onAddMedication: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCompleteMedication: (medication: Medication) => Promise<void>; onContinue: () => void; onSelect: (id: string | null) => void;
-  onUpdateCare: (event: FormEvent<HTMLFormElement>) => Promise<void>; onUpdateInformation: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onUpdateCare: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onUpdateInformation: (event: FormEvent<HTMLFormElement>, thumbnail: PreparedThumbnailUpload | null) => Promise<boolean>;
 }
 
 function Horses(props: HorseSectionProps): React.JSX.Element {
@@ -529,8 +531,38 @@ function HorseInformationFields({ horse }: { readonly horse?: Horse }): React.JS
   return <><div className="grid gap-4 sm:grid-cols-2"><Label name="Breed or type"><input className={input} defaultValue={horse?.horse_type ?? ""} maxLength={160} name="horseType" placeholder="Example: Quarter Horse" /></Label><Label name="Year born"><input className={input} defaultValue={horse?.birth_year ?? ""} max={latestBirthYear} min={1900} name="birthYear" placeholder="Example: 2015" type="number" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="Veterinarian"><input className={input} defaultValue={horse?.veterinarian_name ?? ""} maxLength={160} name="veterinarianName" /></Label><Label name="Veterinarian phone"><input autoComplete="tel" className={input} defaultValue={horse?.veterinarian_phone ?? ""} maxLength={50} name="veterinarianPhone" type="tel" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="Farrier"><input className={input} defaultValue={horse?.farrier_name ?? ""} maxLength={160} name="farrierName" /></Label><Label name="Farrier phone"><input autoComplete="tel" className={input} defaultValue={horse?.farrier_phone ?? ""} maxLength={50} name="farrierPhone" type="tel" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="Deworming schedule"><textarea className={area} defaultValue={horse?.deworming_schedule ?? ""} maxLength={4000} name="dewormingSchedule" placeholder="Products, dates, or rotation instructions" /></Label><Label name="Vaccine schedule"><textarea className={area} defaultValue={horse?.vaccine_schedule ?? ""} maxLength={4000} name="vaccineSchedule" placeholder="Vaccines, due dates, and instructions" /></Label></div></>;
 }
 
-function HorseInformationCard({ horse, ownerContacts, saving, onUpdate }: { readonly horse: HorseView; readonly ownerContacts: readonly { readonly owner: Profile; readonly relationship: Relationship }[]; readonly saving: boolean; readonly onUpdate: (event: FormEvent<HTMLFormElement>) => Promise<void> }): React.JSX.Element {
-  return <Card title={`${horse.name}’s information card`} description="Identity, health contacts, schedules, and owner contacts"><form className="space-y-4" key={horse.updated_at} onSubmit={(event) => void onUpdate(event)}><div className="flex flex-col gap-4 rounded-2xl bg-[#f7f3e9] p-4 sm:flex-row sm:items-center">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-24 w-24 shrink-0 rounded-2xl bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-24 w-24 shrink-0 place-items-center rounded-2xl bg-[#1d3528] font-serif text-3xl text-white">{horse.name[0]}</span>}<Label name="Take or choose a thumbnail photo"><input accept="image/jpeg,image/png,image/webp,image/heic,image/heif" className="block w-full text-sm file:mr-3 file:rounded-full file:border-0 file:bg-[#e4ece4] file:px-4 file:py-2 file:font-bold file:text-[#385943]" name="thumbnail" type="file" /></Label></div><HorseInformationFields horse={horse} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save information card</button></form><div className="mt-6 border-t border-[#dedfd8] pt-5"><h4 className="mb-3 font-serif text-xl">Owners and family</h4>{ownerContacts.length === 0 ? <Empty>Connect an owner in People & access to show their contact information here.</Empty> : <div className="grid gap-3 sm:grid-cols-2">{ownerContacts.map(({ owner, relationship }) => <address className="rounded-xl border border-[#dedfd8] bg-white p-4 text-sm not-italic" key={owner.id}><strong className="block">{owner.full_name}</strong><span className="mb-2 block text-xs text-[#68736b]">{relationship === "primary_owner" ? "Primary owner" : "Authorized family"}</span><a className="block font-bold text-[#385943] underline" href={`mailto:${owner.email}`}>{owner.email}</a>{owner.phone ? <a className="mt-1 block font-bold text-[#385943] underline" href={`tel:${owner.phone}`}>{owner.phone}</a> : <span className="mt-1 block text-[#68736b]">Phone not added</span>}</address>)}</div>}</div></Card>;
+function HorseInformationCard({ horse, ownerContacts, saving, onUpdate }: { readonly horse: HorseView; readonly ownerContacts: readonly { readonly owner: Profile; readonly relationship: Relationship }[]; readonly saving: boolean; readonly onUpdate: (event: FormEvent<HTMLFormElement>, thumbnail: PreparedThumbnailUpload | null) => Promise<boolean> }): React.JSX.Element {
+  const [preparedThumbnail, setPreparedThumbnail] = useState<PreparedThumbnailUpload | null>(null);
+  const [thumbnailStatus, setThumbnailStatus] = useState<string | null>(null);
+  const [preparingThumbnail, setPreparingThumbnail] = useState(false);
+
+  async function selectThumbnail(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const fileInput = event.currentTarget;
+    const selectedFile = fileInput.files?.[0] ?? null;
+    setPreparedThumbnail(null);
+    setThumbnailStatus(null);
+    if (!selectedFile) return;
+    setPreparingThumbnail(true);
+    try {
+      setPreparedThumbnail(await prepareThumbnailUpload(selectedFile));
+      setThumbnailStatus(`${selectedFile.name} is ready to save.`);
+    } catch (error: unknown) {
+      fileInput.value = "";
+      setThumbnailStatus(messageFrom(error));
+    } finally {
+      setPreparingThumbnail(false);
+    }
+  }
+
+  async function submitInformation(event: FormEvent<HTMLFormElement>): Promise<void> {
+    const saved = await onUpdate(event, preparedThumbnail);
+    if (saved) {
+      setPreparedThumbnail(null);
+      setThumbnailStatus(null);
+    }
+  }
+
+  return <Card title={`${horse.name}’s information card`} description="Identity, health contacts, schedules, and owner contacts"><form className="space-y-4" key={horse.updated_at} onSubmit={(event) => void submitInformation(event)}><div className="flex flex-col gap-4 rounded-2xl bg-[#f7f3e9] p-4 sm:flex-row sm:items-center">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-24 w-24 shrink-0 rounded-2xl bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-24 w-24 shrink-0 place-items-center rounded-2xl bg-[#1d3528] font-serif text-3xl text-white">{horse.name[0]}</span>}<div className="flex-1"><Label name="Take or choose a thumbnail photo"><input accept="image/jpeg,image/png,image/webp,image/heic,image/heif" className="block w-full text-sm file:mr-3 file:rounded-full file:border-0 file:bg-[#e4ece4] file:px-4 file:py-2 file:font-bold file:text-[#385943]" name="thumbnail" onChange={(event) => void selectThumbnail(event)} type="file" /></Label>{preparingThumbnail ? <p className="mb-0 mt-2 text-sm text-[#68736b]" role="status">Preparing photo…</p> : null}{thumbnailStatus ? <p className={`mb-0 mt-2 text-sm ${preparedThumbnail ? "text-[#385943]" : "text-[#a65333]"}`} role="status">{thumbnailStatus}</p> : null}</div></div><HorseInformationFields horse={horse} /><button className={primary} disabled={saving || preparingThumbnail} type="submit"><Check size={17} />Save information card</button></form><div className="mt-6 border-t border-[#dedfd8] pt-5"><h4 className="mb-3 font-serif text-xl">Owners and family</h4>{ownerContacts.length === 0 ? <Empty>Connect an owner in People & access to show their contact information here.</Empty> : <div className="grid gap-3 sm:grid-cols-2">{ownerContacts.map(({ owner, relationship }) => <address className="rounded-xl border border-[#dedfd8] bg-white p-4 text-sm not-italic" key={owner.id}><strong className="block">{owner.full_name}</strong><span className="mb-2 block text-xs text-[#68736b]">{relationship === "primary_owner" ? "Primary owner" : "Authorized family"}</span><a className="block font-bold text-[#385943] underline" href={`mailto:${owner.email}`}>{owner.email}</a>{owner.phone ? <a className="mt-1 block font-bold text-[#385943] underline" href={`tel:${owner.phone}`}>{owner.phone}</a> : <span className="mt-1 block text-[#68736b]">Phone not added</span>}</address>)}</div>}</div></Card>;
 }
 
 function MedicationCard({ horse, saving, onAdd, onComplete }: { readonly horse: HorseView; readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void>; readonly onComplete: (medication: Medication) => Promise<void> }): React.JSX.Element {

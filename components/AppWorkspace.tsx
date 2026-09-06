@@ -508,12 +508,12 @@ function FieldsHerdsOverview({ fields, horses, isAdmin, onManage }: FieldsHerdsO
     return horseNames.length > 0 ? [{ field, horseNames }] : [];
   });
 
-  return <section className="mb-4 rounded-2xl border border-[#dedfd8] bg-[#fffdf8] p-4 sm:mb-6 sm:p-5" aria-labelledby="fields-herds-heading">
+  return <section className="mb-4 rounded-2xl bg-[#1d3528] p-4 text-white shadow-xl sm:mb-6 sm:rounded-[2rem] sm:p-5" aria-labelledby="fields-herds-heading">
     <div className="mb-3 flex items-center justify-between gap-3">
-      <h2 className="mb-0 font-serif text-2xl" id="fields-herds-heading">Fields/Herds</h2>
+      <h2 className="mb-0 font-serif text-2xl text-white" id="fields-herds-heading">Fields/Herds</h2>
       {isAdmin ? <button className={secondaryButton} onClick={onManage} type="button"><MapPin size={16} />Manage fields &amp; herds</button> : null}
     </div>
-    {occupiedFields.length > 0 ? <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4">{occupiedFields.map(({ field, horseNames }) => <article className="rounded-xl border border-[#d8ddd7] bg-[#f3f6f2] p-3" key={field.id}><strong className="mb-1.5 block text-sm text-[#1d3528]">{field.name}</strong><p className="mb-0 text-xs leading-5 text-[#56645b]">{horseNames.join(", ")}</p></article>)}</div> : <p className="mb-0 rounded-xl bg-[#f3f6f2] p-3 text-sm text-[#68736b]">No horses are assigned to a field.</p>}
+    {occupiedFields.length > 0 ? <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4">{occupiedFields.map(({ field, horseNames }) => <article className="rounded-xl border border-white/20 bg-white/10 p-3" key={field.id}><strong className="mb-1.5 block text-sm text-[#f1bd98]">{field.name}</strong><p className="mb-0 text-xs leading-5 text-[#e2ebe4]">{horseNames.join(", ")}</p></article>)}</div> : <p className="mb-0 rounded-xl bg-white/10 p-3 text-sm text-[#cdd9cf]">No horses are assigned to a field.</p>}
   </section>;
 }
 

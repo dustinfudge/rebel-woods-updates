@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Archive, ArrowRight, CalendarClock, Check, LoaderCircle, LogOut, MapPin, Plus, RotateCcw, ShieldCheck, Stethoscope, UserMinus, UsersRound } from "lucide-react";
+import { AlertCircle, Archive, ArrowRight, CalendarClock, Check, LoaderCircle, LogOut, MapPin, Plus, RotateCcw, ShieldCheck, Stethoscope, Trash2, UserMinus, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -71,7 +71,7 @@ function messageFrom(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
-async function invitationErrorMessage(error: unknown): Promise<string> {
+async function functionErrorMessage(error: unknown): Promise<string> {
   if (typeof error === "object" && error !== null && "context" in error && error.context instanceof Response) {
     const responseBody: unknown = await error.context.clone().json().catch((): null => null);
     if (typeof responseBody === "object" && responseBody !== null && "error" in responseBody && typeof responseBody.error === "string") {
@@ -79,6 +79,14 @@ async function invitationErrorMessage(error: unknown): Promise<string> {
     }
   }
   return messageFrom(error);
+}
+
+function confirmPermanentDeletion(recordName: string, recordType: "horse" | "person"): boolean {
+  const confirmation = window.prompt(`Permanently delete ${recordName}? This cannot be undone. Type ${recordName} to confirm deleting this ${recordType}.`);
+  if (confirmation === null) return false;
+  if (confirmation.trim() === recordName) return true;
+  window.alert(`Nothing was deleted. The confirmation must exactly match ${recordName}.`);
+  return false;
 }
 
 function horseInformationFrom(formData: FormData): HorseInformationUpdate {
@@ -373,6 +381,15 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     });
   }
 
+  async function permanentlyDeleteHorse(horse: Horse): Promise<void> {
+    if (!confirmPermanentDeletion(horse.name, "horse")) return;
+    await mutate(async () => {
+      const { error } = await getSupabaseBrowserClient().functions.invoke("delete-stable-record", { body: { id: horse.id, kind: "horse" } });
+      if (error) throw new Error(await functionErrorMessage(error));
+      await refresh(`${horse.name} and all associated records were permanently deleted.`, true);
+    });
+  }
+
   async function setPersonActive(person: Profile, isActive: boolean): Promise<void> {
     if (!profile) return;
     await mutate(async () => {
@@ -380,6 +397,16 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       const { error } = await getSupabaseBrowserClient().from("profiles").update({ is_active: isActive }).eq("id", person.id);
       if (error) throw error;
       await refresh(isActive ? `${person.full_name} was restored.` : `${person.full_name} was deactivated. Their records were preserved.`);
+    });
+  }
+
+  async function permanentlyDeletePerson(person: Profile): Promise<void> {
+    if (person.role === "admin") return;
+    if (!confirmPermanentDeletion(person.full_name, "person")) return;
+    await mutate(async () => {
+      const { error } = await getSupabaseBrowserClient().functions.invoke("delete-stable-record", { body: { id: person.id, kind: "person" } });
+      if (error) throw new Error(await functionErrorMessage(error));
+      await refresh(`${person.full_name} was permanently deleted.`);
     });
   }
 
@@ -419,7 +446,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       const { error } = await getSupabaseBrowserClient().functions.invoke("invite-user", { body: {
         email: value(formData, "email").toLowerCase(), fullName: value(formData, "fullName"), phone: value(formData, "phone"), role,
       } });
-      if (error) throw new Error(await invitationErrorMessage(error));
+      if (error) throw new Error(await functionErrorMessage(error));
       form.reset();
       await refresh("The invitation was sent.");
     });
@@ -478,8 +505,8 @@ export function AdminSetupWorkspace(): React.JSX.Element {
           <Tab active={section === "locations"} complete={data.fields.length > 0 && data.herds.length > 0} icon={<MapPin size={18} />} label="3. Fields & herds" onClick={() => setSection("locations")} />
         </nav>
         {section === "locations" ? <Locations fields={data.fields} herds={data.herds} retentionDays={data.organization?.update_retention_days ?? 180} saving={saving} onAdd={addLocation} onUpdateRetention={updateRetention} /> : null}
-        {section === "horses" ? <Horses access={data.access} archivedHorses={archivedHorses} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddMedication={addMedication} onArchive={archiveHorse} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onRestore={restoreHorse} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
-        {section === "people" ? <People access={data.access} currentProfileId={profile.id} horses={horses} owners={owners} profiles={data.profiles} saving={saving} onContinue={() => setSection("locations")} onGrant={grantAccess} onInvite={invite} onSetActive={setPersonActive} onUpdatePhone={updatePersonPhone} /> : null}
+        {section === "horses" ? <Horses access={data.access} archivedHorses={archivedHorses} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddMedication={addMedication} onArchive={archiveHorse} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onDelete={permanentlyDeleteHorse} onRestore={restoreHorse} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
+        {section === "people" ? <People access={data.access} currentProfileId={profile.id} horses={horses} owners={owners} profiles={data.profiles} saving={saving} onContinue={() => setSection("locations")} onDelete={permanentlyDeletePerson} onGrant={grantAccess} onInvite={invite} onSetActive={setPersonActive} onUpdatePhone={updatePersonPhone} /> : null}
       </div>
     </div>
   );
@@ -537,24 +564,25 @@ interface HorseSectionProps {
   access: readonly HorseAccess[]; archivedHorses: readonly HorseView[]; horses: readonly HorseView[]; profiles: readonly Profile[]; saving: boolean; selectedHorse: HorseView | null;
   onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void>; onAddMedication: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onArchive: (horse: Horse) => Promise<void>; onCompleteMedication: (medication: Medication) => Promise<void>; onContinue: () => void;
+  onDelete: (horse: Horse) => Promise<void>;
   onRestore: (horse: Horse) => Promise<void>; onSelect: (id: string | null) => void;
   onUpdateCare: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onUpdateInformation: (event: FormEvent<HTMLFormElement>, thumbnail: PreparedThumbnailUpload | null) => Promise<boolean>;
 }
 
 function Horses(props: HorseSectionProps): React.JSX.Element {
-  const { access, archivedHorses, horses, profiles, saving, selectedHorse, onAdd, onAddMedication, onArchive, onCompleteMedication, onContinue, onRestore, onSelect, onUpdateCare, onUpdateInformation } = props;
+  const { access, archivedHorses, horses, profiles, saving, selectedHorse, onAdd, onAddMedication, onArchive, onCompleteMedication, onContinue, onDelete, onRestore, onSelect, onUpdateCare, onUpdateInformation } = props;
   const people = new Map(profiles.map((person) => [person.id, person]));
   const ownerContacts = selectedHorse ? access.filter((permission) => permission.horse_id === selectedHorse.id).flatMap((permission) => {
     const owner = people.get(permission.profile_id);
     return owner?.role === "owner" && owner.is_active ? [{ owner, relationship: permission.relationship }] : [];
   }) : [];
-  return <section><Intro step="Step one" title="Add horses, information, and care instructions.">Only administrators can change this information. Special requirement changes automatically alert administrators and Rebel Wranglers.</Intro><div className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]"><Card title="Your horses" description={`${horses.length} active ${horses.length === 1 ? "horse" : "horses"}`}><div className="space-y-2">{horses.length === 0 ? <Empty>No horses added yet.</Empty> : horses.map((horse) => <button className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${selectedHorse?.id === horse.id ? "border-[#385943] bg-[#e4ece4]" : "border-[#dedfd8] bg-white"}`} key={horse.id} onClick={() => onSelect(horse.id)} type="button">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-12 w-12 shrink-0 rounded-full bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#1d3528] font-serif text-white">{horse.name[0]}</span>}<span className="min-w-0 flex-1"><strong className="block truncate">{horse.name}</strong><small className="block truncate text-[#68736b]">{horse.fieldName} · {horse.herdName}</small></span><ArrowRight size={17} /></button>)}</div><ArchivedHorseList horses={archivedHorses} saving={saving} onRestore={onRestore} /></Card>{selectedHorse ? <div className="space-y-5"><HorseInformationCard horse={selectedHorse} ownerContacts={ownerContacts} saving={saving} onArchive={onArchive} onUpdate={onUpdateInformation} /><Card title={`${selectedHorse.name}’s care card`} description="Feed, supplements, and daily instructions"><form className="space-y-4" key={selectedHorse.careProfile?.updated_at ?? selectedHorse.id} onSubmit={(event) => void onUpdateCare(event)}><CareFields care={selectedHorse.careProfile} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save care card</button></form></Card><MedicationCard horse={selectedHorse} saving={saving} onAdd={onAddMedication} onComplete={onCompleteMedication} /></div> : <AddHorseCard saving={saving} onAdd={onAdd} />}</div>{selectedHorse ? <button className={`${secondary} mt-5`} onClick={() => onSelect(null)} type="button"><Plus size={16} />Add another horse</button> : null}<Continue disabled={horses.length === 0} onClick={onContinue}>Continue to owners</Continue></section>;
+  return <section><Intro step="Step one" title="Add horses, information, and care instructions.">Only administrators can change this information. Special requirement changes automatically alert administrators and Rebel Wranglers.</Intro><div className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]"><Card title="Your horses" description={`${horses.length} active ${horses.length === 1 ? "horse" : "horses"}`}><div className="space-y-2">{horses.length === 0 ? <Empty>No horses added yet.</Empty> : horses.map((horse) => <button className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${selectedHorse?.id === horse.id ? "border-[#385943] bg-[#e4ece4]" : "border-[#dedfd8] bg-white"}`} key={horse.id} onClick={() => onSelect(horse.id)} type="button">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-12 w-12 shrink-0 rounded-full bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#1d3528] font-serif text-white">{horse.name[0]}</span>}<span className="min-w-0 flex-1"><strong className="block truncate">{horse.name}</strong><small className="block truncate text-[#68736b]">{horse.fieldName} · {horse.herdName}</small></span><ArrowRight size={17} /></button>)}</div><ArchivedHorseList horses={archivedHorses} saving={saving} onDelete={onDelete} onRestore={onRestore} /></Card>{selectedHorse ? <div className="space-y-5"><HorseInformationCard horse={selectedHorse} ownerContacts={ownerContacts} saving={saving} onArchive={onArchive} onUpdate={onUpdateInformation} /><Card title={`${selectedHorse.name}’s care card`} description="Feed, supplements, and daily instructions"><form className="space-y-4" key={selectedHorse.careProfile?.updated_at ?? selectedHorse.id} onSubmit={(event) => void onUpdateCare(event)}><CareFields care={selectedHorse.careProfile} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save care card</button></form></Card><MedicationCard horse={selectedHorse} saving={saving} onAdd={onAddMedication} onComplete={onCompleteMedication} /></div> : <AddHorseCard saving={saving} onAdd={onAdd} />}</div>{selectedHorse ? <button className={`${secondary} mt-5`} onClick={() => onSelect(null)} type="button"><Plus size={16} />Add another horse</button> : null}<Continue disabled={horses.length === 0} onClick={onContinue}>Continue to owners</Continue></section>;
 }
 
-function ArchivedHorseList({ horses, saving, onRestore }: { readonly horses: readonly HorseView[]; readonly saving: boolean; readonly onRestore: (horse: Horse) => Promise<void> }): React.JSX.Element | null {
+function ArchivedHorseList({ horses, saving, onDelete, onRestore }: { readonly horses: readonly HorseView[]; readonly saving: boolean; readonly onDelete: (horse: Horse) => Promise<void>; readonly onRestore: (horse: Horse) => Promise<void> }): React.JSX.Element | null {
   if (horses.length === 0) return null;
-  return <details className="mt-4 rounded-xl border border-[#dedfd8] bg-[#f7f3e9] p-3"><summary className="cursor-pointer text-sm font-bold text-[#385943]">Removed horses · {horses.length}</summary><div className="mt-3 space-y-2">{horses.map((horse) => <div className="flex items-center justify-between gap-3 rounded-xl bg-white p-3 text-sm" key={horse.id}><span><strong className="block">{horse.name}</strong><small className="text-[#68736b]">Records preserved</small></span><button className={secondary} disabled={saving} onClick={() => void onRestore(horse)} type="button"><RotateCcw size={15} />Restore</button></div>)}</div></details>;
+  return <details className="mt-4 rounded-xl border border-[#dedfd8] bg-[#f7f3e9] p-3"><summary className="cursor-pointer text-sm font-bold text-[#385943]">Removed horses · {horses.length}</summary><div className="mt-3 space-y-2">{horses.map((horse) => <div className="rounded-xl bg-white p-3 text-sm" key={horse.id}><span><strong className="block">{horse.name}</strong><small className="text-[#68736b]">Records preserved unless permanently deleted</small></span><div className="mt-3 flex flex-wrap gap-2"><button className={secondary} disabled={saving} onClick={() => void onRestore(horse)} type="button"><RotateCcw size={15} />Restore</button><button className={danger} disabled={saving} onClick={() => void onDelete(horse)} type="button"><Trash2 size={15} />Permanently delete</button></div></div>)}</div></details>;
 }
 
 function AddHorseCard({ saving, onAdd }: { readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void> }): React.JSX.Element {
@@ -610,12 +638,13 @@ interface PeopleProps {
   access: readonly HorseAccess[]; horses: readonly HorseView[]; owners: readonly Profile[]; profiles: readonly Profile[]; saving: boolean;
   currentProfileId: string;
   onContinue: () => void;
+  onDelete: (person: Profile) => Promise<void>;
   onGrant: (event: FormEvent<HTMLFormElement>) => Promise<void>; onInvite: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onSetActive: (person: Profile, isActive: boolean) => Promise<void>;
   onUpdatePhone: (event: FormEvent<HTMLFormElement>, personId: string) => Promise<void>;
 }
 
-function People({ access, currentProfileId, horses, owners, profiles, saving, onContinue, onGrant, onInvite, onSetActive, onUpdatePhone }: PeopleProps): React.JSX.Element {
+function People({ access, currentProfileId, horses, owners, profiles, saving, onContinue, onDelete, onGrant, onInvite, onSetActive, onUpdatePhone }: PeopleProps): React.JSX.Element {
   const people = new Map(profiles.map((person) => [person.id, person]));
   const horseNames = new Map(horses.map((horse) => [horse.id, horse.name]));
   const activeProfiles = profiles.filter((person) => person.is_active);
@@ -630,7 +659,7 @@ function People({ access, currentProfileId, horses, owners, profiles, saving, on
     <div className="mt-5 grid gap-5 lg:grid-cols-2">
       <Card title="People" description={`${activeProfiles.length} active people`}>
         <div className="space-y-3">{activeProfiles.map((person) => <form className="rounded-xl border border-[#dedfd8] bg-white p-3 text-sm" key={person.id} onSubmit={(event) => void onUpdatePhone(event, person.id)}><div className="mb-3 flex items-start justify-between gap-3"><span><strong className="block">{person.full_name}</strong><small className="text-[#68736b]">{person.email}</small></span><span className="rounded-full bg-[#f3ded3] px-2 py-1 text-[10px] font-bold text-[#73391f]">{roleLabel(person.role)}</span></div><div className="flex gap-2"><input aria-label={`${person.full_name} phone number`} className={input} defaultValue={person.phone} maxLength={50} name="phone" placeholder="Phone number" type="tel" /><button className={secondary} disabled={saving} type="submit">Save</button></div>{person.id === currentProfileId ? <p className="mb-0 mt-2 text-xs font-bold text-[#68736b]">Your administrator account</p> : <button className={`${danger} mt-3`} disabled={saving} onClick={() => { if (window.confirm(`Deactivate ${person.full_name}? They will lose app access, but their records will be preserved.`)) void onSetActive(person, false); }} type="button"><UserMinus size={15} />Deactivate</button>}</form>)}</div>
-        <InactivePeople people={inactiveProfiles} saving={saving} onRestore={onSetActive} />
+        <InactivePeople people={inactiveProfiles} saving={saving} onDelete={onDelete} onRestore={onSetActive} />
       </Card>
       <Card title="Horse access" description="Current owner and family connections">{access.length === 0 ? <Empty>No horse access assigned yet.</Empty> : <div className="space-y-2">{access.map((permission) => <div className="flex justify-between rounded-xl border border-[#dedfd8] bg-white p-3 text-sm" key={`${permission.horse_id}-${permission.profile_id}`}><span><strong className="block">{people.get(permission.profile_id)?.full_name ?? "Unknown person"}</strong><small className="text-[#68736b]">{permission.relationship === "primary_owner" ? "Primary owner" : "Authorized family"}</small></span><strong className="font-serif text-lg">{horseNames.get(permission.horse_id) ?? "Inactive horse"}</strong></div>)}</div>}</Card>
     </div>
@@ -638,7 +667,7 @@ function People({ access, currentProfileId, horses, owners, profiles, saving, on
   </section>;
 }
 
-function InactivePeople({ people, saving, onRestore }: { readonly people: readonly Profile[]; readonly saving: boolean; readonly onRestore: (person: Profile, isActive: boolean) => Promise<void> }): React.JSX.Element | null {
+function InactivePeople({ people, saving, onDelete, onRestore }: { readonly people: readonly Profile[]; readonly saving: boolean; readonly onDelete: (person: Profile) => Promise<void>; readonly onRestore: (person: Profile, isActive: boolean) => Promise<void> }): React.JSX.Element | null {
   if (people.length === 0) return null;
-  return <details className="mt-4 rounded-xl border border-[#dedfd8] bg-[#f7f3e9] p-3"><summary className="cursor-pointer text-sm font-bold text-[#385943]">Deactivated people · {people.length}</summary><div className="mt-3 space-y-2">{people.map((person) => <div className="flex items-center justify-between gap-3 rounded-xl bg-white p-3 text-sm" key={person.id}><span><strong className="block">{person.full_name}</strong><small className="text-[#68736b]">{person.email}</small></span><button className={secondary} disabled={saving} onClick={() => void onRestore(person, true)} type="button"><RotateCcw size={15} />Restore</button></div>)}</div></details>;
+  return <details className="mt-4 rounded-xl border border-[#dedfd8] bg-[#f7f3e9] p-3"><summary className="cursor-pointer text-sm font-bold text-[#385943]">Deactivated people · {people.length}</summary><div className="mt-3 space-y-2">{people.map((person) => <div className="rounded-xl bg-white p-3 text-sm" key={person.id}><span><strong className="block">{person.full_name}</strong><small className="text-[#68736b]">{person.email}</small></span><div className="mt-3 flex flex-wrap gap-2"><button className={secondary} disabled={saving} onClick={() => void onRestore(person, true)} type="button"><RotateCcw size={15} />Restore</button>{person.role === "admin" ? <span className="self-center text-xs font-bold text-[#68736b]">Administrator accounts cannot be deleted</span> : <button className={danger} disabled={saving} onClick={() => void onDelete(person)} type="button"><Trash2 size={15} />Permanently delete</button>}</div></div>)}</div></details>;
 }

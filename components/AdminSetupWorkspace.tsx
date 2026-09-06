@@ -48,8 +48,8 @@ interface Notice {
 
 interface PreparedThumbnailUpload {
   body: ArrayBuffer | Blob;
-  contentType: "image/heic" | "image/jpeg";
-  extension: "heic" | "jpg";
+  contentType: "image/heic" | "image/jpeg" | "image/png" | "image/webp";
+  extension: "heic" | "jpg" | "png" | "webp";
 }
 
 const emptyData: SetupData = { organization: null, fields: [], herds: [], horses: [], care: [], profiles: [], access: [], medications: [] };
@@ -117,6 +117,13 @@ function canvasJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
+async function originalThumbnailUpload(file: File): Promise<PreparedThumbnailUpload> {
+  if (file.type === "image/png") return { body: await file.arrayBuffer(), contentType: "image/png", extension: "png" };
+  if (file.type === "image/webp") return { body: await file.arrayBuffer(), contentType: "image/webp", extension: "webp" };
+  if (file.type === "image/heic" || file.type === "image/heif") return { body: await file.arrayBuffer(), contentType: "image/heic", extension: "heic" };
+  return { body: await file.arrayBuffer(), contentType: "image/jpeg", extension: "jpg" };
+}
+
 async function prepareThumbnailUpload(file: File): Promise<PreparedThumbnailUpload> {
   if (file.size > maximumThumbnailSourceBytes) throw new Error("Choose a photo that is 25 MB or smaller.");
   if (!supportedThumbnailTypes.has(file.type)) throw new Error("Choose a JPG, PNG, WebP, HEIC, or HEIF image.");
@@ -134,9 +141,8 @@ async function prepareThumbnailUpload(file: File): Promise<PreparedThumbnailUplo
       if (!context) throw new Error("This browser could not prepare the photo. Please try a different photo.");
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
       return { body: await canvasJpeg(canvas), contentType: "image/jpeg", extension: "jpg" };
-    } catch (error: unknown) {
-      if (file.type !== "image/heic" && file.type !== "image/heif") throw error;
-      return { body: await file.arrayBuffer(), contentType: "image/heic", extension: "heic" };
+    } catch {
+      return await originalThumbnailUpload(file);
     }
   } finally {
     URL.revokeObjectURL(objectUrl);

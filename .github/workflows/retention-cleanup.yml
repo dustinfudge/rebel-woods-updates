@@ -1,0 +1,25 @@
+name: Weekly Conversation Cleanup
+
+on:
+  schedule:
+    - cron: "0 9 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  remove-expired-conversations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove messages and media beyond the retention period
+        env:
+          RETENTION_CLEANUP_SECRET: ${{ secrets.RETENTION_CLEANUP_SECRET }}
+        run: |
+          test -n "$RETENTION_CLEANUP_SECRET"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "x-retention-secret: $RETENTION_CLEANUP_SECRET" \
+            --data '{}' \
+            "https://httkpkpraocvqiehract.supabase.co/functions/v1/cleanup-expired-updates"

@@ -32,12 +32,30 @@ function jsonResponse(status: number, body: Readonly<Record<string, unknown>>): 
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
-    return error.message;
-  }
+  if (isRecord(error) && typeof error.message === "string") return error.message;
   return "Cleanup failed.";
+}
+
+function configuredSecretKey(): string | null {
+  const secretKeysValue = Deno.env.get("SUPABASE_SECRET_KEYS");
+  if (secretKeysValue) {
+    try {
+      const parsedSecretKeys: unknown = JSON.parse(secretKeysValue);
+      if (isRecord(parsedSecretKeys)) {
+        const defaultSecretKey = parsedSecretKeys.default;
+        if (typeof defaultSecretKey === "string" && defaultSecretKey.length > 0) return defaultSecretKey;
+      }
+    } catch {
+      return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? null;
+    }
+  }
+  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? null;
 }
 
 function chunkItems<Item>(items: readonly Item[], size: number): readonly (readonly Item[])[] {
@@ -60,17 +78,17 @@ Deno.serve(async (request: Request): Promise<Response> => {
   if (request.method !== "POST") return jsonResponse(405, { error: "Method not allowed." });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const secretKey = configuredSecretKey();
   const configuredCleanupSecret = Deno.env.get("RETENTION_CLEANUP_SECRET");
   const suppliedCleanupSecret = request.headers.get("x-retention-secret");
-  if (!supabaseUrl || !serviceRoleKey || !configuredCleanupSecret) {
+  if (!supabaseUrl || !secretKey || !configuredCleanupSecret) {
     return jsonResponse(500, { error: "Cleanup configuration is incomplete." });
   }
   if (!suppliedCleanupSecret || suppliedCleanupSecret !== configuredCleanupSecret) {
     return jsonResponse(401, { error: "Authentication is required." });
   }
 
-  const client = createClient(supabaseUrl, serviceRoleKey, {
+  const client = createClient(supabaseUrl, secretKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const summary: CleanupSummary = { deletedMessages: 0, deletedMedia: 0 };

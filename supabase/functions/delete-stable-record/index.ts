@@ -44,6 +44,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (isRecord(error) && typeof error.message === "string") return error.message;
+  if (typeof error === "string") return error;
+  return "Permanent deletion failed.";
+}
+
 function configuredSecretKey(): string | null {
   const secretKeysValue = Deno.env.get("SUPABASE_SECRET_KEYS");
   if (secretKeysValue) {
@@ -208,7 +215,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     if (storageFailures.length > 0) console.error(`Storage cleanup failures: ${storageFailures.join("; ")}`);
     return jsonResponse(200, { deleted: deletion.kind, removedFiles: storedPaths.length });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Permanent deletion failed.";
+    const message = errorMessage(error);
     console.error(message);
     return jsonResponse(500, { error: message });
   }

@@ -467,6 +467,18 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     });
   }
 
+  async function removeHorseAccess(permission: HorseAccess): Promise<void> {
+    await mutate(async () => {
+      const { error } = await getSupabaseBrowserClient()
+        .from("horse_access")
+        .delete()
+        .eq("horse_id", permission.horse_id)
+        .eq("profile_id", permission.profile_id);
+      if (error) throw error;
+      await refresh("Horse access was removed.");
+    });
+  }
+
   async function updatePersonPhone(event: FormEvent<HTMLFormElement>, personId: string): Promise<void> {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -506,7 +518,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
         </nav>
         {section === "locations" ? <Locations fields={data.fields} herds={data.herds} retentionDays={data.organization?.update_retention_days ?? 180} saving={saving} onAdd={addLocation} onUpdateRetention={updateRetention} /> : null}
         {section === "horses" ? <Horses access={data.access} archivedHorses={archivedHorses} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddMedication={addMedication} onArchive={archiveHorse} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onDelete={permanentlyDeleteHorse} onRestore={restoreHorse} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
-        {section === "people" ? <People access={data.access} currentProfileId={profile.id} horses={horses} owners={owners} profiles={data.profiles} saving={saving} onContinue={() => setSection("locations")} onDelete={permanentlyDeletePerson} onGrant={grantAccess} onInvite={invite} onSetActive={setPersonActive} onUpdatePhone={updatePersonPhone} /> : null}
+        {section === "people" ? <People access={data.access} currentProfileId={profile.id} horses={horses} owners={owners} profiles={data.profiles} saving={saving} onContinue={() => setSection("locations")} onDelete={permanentlyDeletePerson} onGrant={grantAccess} onInvite={invite} onRemoveAccess={removeHorseAccess} onSetActive={setPersonActive} onUpdatePhone={updatePersonPhone} /> : null}
       </div>
     </div>
   );
@@ -640,11 +652,12 @@ interface PeopleProps {
   onContinue: () => void;
   onDelete: (person: Profile) => Promise<void>;
   onGrant: (event: FormEvent<HTMLFormElement>) => Promise<void>; onInvite: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onRemoveAccess: (permission: HorseAccess) => Promise<void>;
   onSetActive: (person: Profile, isActive: boolean) => Promise<void>;
   onUpdatePhone: (event: FormEvent<HTMLFormElement>, personId: string) => Promise<void>;
 }
 
-function People({ access, currentProfileId, horses, owners, profiles, saving, onContinue, onDelete, onGrant, onInvite, onSetActive, onUpdatePhone }: PeopleProps): React.JSX.Element {
+function People({ access, currentProfileId, horses, owners, profiles, saving, onContinue, onDelete, onGrant, onInvite, onRemoveAccess, onSetActive, onUpdatePhone }: PeopleProps): React.JSX.Element {
   const people = new Map(profiles.map((person) => [person.id, person]));
   const horseNames = new Map(horses.map((horse) => [horse.id, horse.name]));
   const activeProfiles = profiles.filter((person) => person.is_active);
@@ -661,7 +674,11 @@ function People({ access, currentProfileId, horses, owners, profiles, saving, on
         <div className="space-y-3">{activeProfiles.map((person) => <form className="rounded-xl border border-[#dedfd8] bg-white p-3 text-sm" key={person.id} onSubmit={(event) => void onUpdatePhone(event, person.id)}><div className="mb-3 flex items-start justify-between gap-3"><span><strong className="block">{person.full_name}</strong><small className="text-[#68736b]">{person.email}</small></span><span className="rounded-full bg-[#f3ded3] px-2 py-1 text-[10px] font-bold text-[#73391f]">{roleLabel(person.role)}</span></div><div className="flex gap-2"><input aria-label={`${person.full_name} phone number`} className={input} defaultValue={person.phone} maxLength={50} name="phone" placeholder="Phone number" type="tel" /><button className={secondary} disabled={saving} type="submit">Save</button></div>{person.id === currentProfileId ? <p className="mb-0 mt-2 text-xs font-bold text-[#68736b]">Your administrator account</p> : <button className={`${danger} mt-3`} disabled={saving} onClick={() => { if (window.confirm(`Deactivate ${person.full_name}? They will lose app access, but their records will be preserved.`)) void onSetActive(person, false); }} type="button"><UserMinus size={15} />Deactivate</button>}</form>)}</div>
         <InactivePeople people={inactiveProfiles} saving={saving} onDelete={onDelete} onRestore={onSetActive} />
       </Card>
-      <Card title="Horse access" description="Current owner and family connections">{access.length === 0 ? <Empty>No horse access assigned yet.</Empty> : <div className="space-y-2">{access.map((permission) => <div className="flex justify-between rounded-xl border border-[#dedfd8] bg-white p-3 text-sm" key={`${permission.horse_id}-${permission.profile_id}`}><span><strong className="block">{people.get(permission.profile_id)?.full_name ?? "Unknown person"}</strong><small className="text-[#68736b]">{permission.relationship === "primary_owner" ? "Primary owner" : "Authorized family"}</small></span><strong className="font-serif text-lg">{horseNames.get(permission.horse_id) ?? "Inactive horse"}</strong></div>)}</div>}</Card>
+      <Card title="Horse access" description="Current owner and family connections">{access.length === 0 ? <Empty>No horse access assigned yet.</Empty> : <div className="space-y-2">{access.map((permission) => {
+        const personName = people.get(permission.profile_id)?.full_name ?? "Unknown person";
+        const horseName = horseNames.get(permission.horse_id) ?? "Inactive horse";
+        return <div className="rounded-xl border border-[#dedfd8] bg-white p-3 text-sm" key={`${permission.horse_id}-${permission.profile_id}`}><div className="flex items-start justify-between gap-3"><span><strong className="block">{personName}</strong><small className="text-[#68736b]">{permission.relationship === "primary_owner" ? "Primary owner" : "Authorized family"}</small></span><strong className="font-serif text-lg">{horseName}</strong></div><button className={`${danger} mt-3`} disabled={saving} onClick={() => { if (window.confirm(`Remove ${personName}’s access to ${horseName}? Their account and other horse access will remain active.`)) void onRemoveAccess(permission); }} type="button"><UserMinus size={15} />Remove access</button></div>;
+      })}</div>}</Card>
     </div>
     <Continue disabled={horses.length === 0 || owners.length === 0} onClick={onContinue}>Continue to fields &amp; herds</Continue>
   </section>;

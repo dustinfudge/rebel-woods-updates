@@ -9,6 +9,10 @@ interface ExpiredConversationMessage {
   readonly id: string;
 }
 
+interface HorseConversation {
+  readonly id: string;
+}
+
 interface StoredConversationMedia {
   readonly storage_bucket: "conversation-media" | "update-media" | "message-media";
   readonly storage_path: string;
@@ -26,6 +30,14 @@ const millisecondsPerDay = 86_400_000;
 
 function jsonResponse(status: number, body: Readonly<Record<string, unknown>>): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return "Cleanup failed.";
 }
 
 function chunkItems<Item>(items: readonly Item[], size: number): readonly (readonly Item[])[] {
@@ -70,12 +82,21 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     for (const organization of organizations) {
       const cutoff = new Date(Date.now() - organization.update_retention_days * millisecondsPerDay).toISOString();
+      const conversationsResult = await client
+        .from("horse_conversations")
+        .select("id")
+        .eq("organization_id", organization.id);
+      if (conversationsResult.error) throw conversationsResult.error;
+      const conversationIds = ((conversationsResult.data ?? []) as readonly HorseConversation[]).map(
+        (conversation) => conversation.id,
+      );
+      if (conversationIds.length === 0) continue;
 
       while (summary.deletedMessages < maximumMessagesPerRun) {
         const messagesResult = await client
           .from("conversation_messages")
-          .select("id, horse_conversations!inner(organization_id)")
-          .eq("horse_conversations.organization_id", organization.id)
+          .select("id")
+          .in("conversation_id", conversationIds)
           .lt("created_at", cutoff)
           .order("created_at", { ascending: true })
           .limit(Math.min(messageBatchSize, maximumMessagesPerRun - summary.deletedMessages));
@@ -112,7 +133,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     return jsonResponse(200, { ...summary, maximumReached: summary.deletedMessages >= maximumMessagesPerRun });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Cleanup failed.";
+    const message = errorMessage(error);
     console.error(message);
     return jsonResponse(500, { error: message, ...summary });
   }

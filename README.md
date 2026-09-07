@@ -78,4 +78,4 @@ Configure these Edge Function secrets:
 
 Deploy `send-push-notification` without JWT verification. Create a Database Webhook for `INSERT` events on `public.notifications`, target the deployed Edge Function, and add the `x-push-webhook-secret` header. Store the same public VAPID key in the GitHub Actions secret `NEXT_PUBLIC_VAPID_PUBLIC_KEY`.
 
-Conversation retention is configured per organization. The cleanup function removes expired conversation messages and their storage objects while preserving care information, medication history, access, and last-staff-contact dates. Do not schedule the function until its deployment and a dry-run review are complete.
+Conversation retention is configured per organization. The cleanup function defaults to preview mode and only removes expired conversation messages and their storage objects when called with `{ "dryRun": false }`. It preserves care information, medication history, access, and last-staff-contact dates. Do not schedule deletion until its deployment and preview review are complete.

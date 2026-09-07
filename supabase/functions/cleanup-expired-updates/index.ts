@@ -15,8 +15,8 @@ interface StoredConversationMedia {
 }
 
 interface CleanupSummary {
-  deletedMessages: number;
-  deletedMedia: number;
+  messages: number;
+  mediaFiles: number;
 }
 
 const messageBatchSize = 100;
@@ -26,6 +26,31 @@ const millisecondsPerDay = 86_400_000;
 
 function jsonResponse(status: number, body: Readonly<Record<string, unknown>>): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function configuredSecretKey(): string | null {
+  const secretKeysValue = Deno.env.get("SUPABASE_SECRET_KEYS");
+  if (secretKeysValue) {
+    try {
+      const parsedSecretKeys: unknown = JSON.parse(secretKeysValue);
+      if (isRecord(parsedSecretKeys)) {
+        const defaultSecretKey = parsedSecretKeys.default;
+        if (typeof defaultSecretKey === "string" && defaultSecretKey.length > 0) return defaultSecretKey;
+      }
+    } catch { /* Fall back to the legacy server credential. */ }
+  }
+  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? null;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (isRecord(error) && typeof error.message === "string") return error.message;
+  if (typeof error === "string") return error;
+  return "Cleanup failed.";
 }
 
 function chunkItems<Item>(items: readonly Item[], size: number): readonly (readonly Item[])[] {
@@ -48,20 +73,22 @@ Deno.serve(async (request: Request): Promise<Response> => {
   if (request.method !== "POST") return jsonResponse(405, { error: "Method not allowed." });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const secretKey = configuredSecretKey();
   const configuredCleanupSecret = Deno.env.get("RETENTION_CLEANUP_SECRET");
   const suppliedCleanupSecret = request.headers.get("x-retention-secret");
-  if (!supabaseUrl || !serviceRoleKey || !configuredCleanupSecret) {
+  if (!supabaseUrl || !secretKey || !configuredCleanupSecret) {
     return jsonResponse(500, { error: "Cleanup configuration is incomplete." });
   }
   if (!suppliedCleanupSecret || suppliedCleanupSecret !== configuredCleanupSecret) {
     return jsonResponse(401, { error: "Authentication is required." });
   }
 
-  const client = createClient(supabaseUrl, serviceRoleKey, {
+  const requestBody: unknown = await request.json().catch((): null => null);
+  const dryRun = !isRecord(requestBody) || requestBody.dryRun !== false;
+  const client = createClient(supabaseUrl, secretKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
-  const summary: CleanupSummary = { deletedMessages: 0, deletedMedia: 0 };
+  const summary: CleanupSummary = { messages: 0, mediaFiles: 0 };
 
   try {
     const organizationsResult = await client.from("organizations").select("id, update_retention_days").order("id");
@@ -71,14 +98,38 @@ Deno.serve(async (request: Request): Promise<Response> => {
     for (const organization of organizations) {
       const cutoff = new Date(Date.now() - organization.update_retention_days * millisecondsPerDay).toISOString();
 
-      while (summary.deletedMessages < maximumMessagesPerRun) {
+      if (dryRun) {
         const messagesResult = await client
           .from("conversation_messages")
           .select("id, horse_conversations!inner(organization_id)")
           .eq("horse_conversations.organization_id", organization.id)
           .lt("created_at", cutoff)
           .order("created_at", { ascending: true })
-          .limit(Math.min(messageBatchSize, maximumMessagesPerRun - summary.deletedMessages));
+          .limit(maximumMessagesPerRun - summary.messages);
+        if (messagesResult.error) throw messagesResult.error;
+        const expiredMessages = (messagesResult.data ?? []) as readonly ExpiredConversationMessage[];
+        const messageIds = expiredMessages.map((message) => message.id);
+        for (const messageIdBatch of chunkItems(messageIds, messageBatchSize)) {
+          const mediaResult = await client
+            .from("conversation_media")
+            .select("storage_path")
+            .in("message_id", messageIdBatch);
+          if (mediaResult.error) throw mediaResult.error;
+          summary.mediaFiles += mediaResult.data?.length ?? 0;
+        }
+        summary.messages += messageIds.length;
+        if (summary.messages >= maximumMessagesPerRun) break;
+        continue;
+      }
+
+      while (summary.messages < maximumMessagesPerRun) {
+        const messagesResult = await client
+          .from("conversation_messages")
+          .select("id, horse_conversations!inner(organization_id)")
+          .eq("horse_conversations.organization_id", organization.id)
+          .lt("created_at", cutoff)
+          .order("created_at", { ascending: true })
+          .limit(Math.min(messageBatchSize, maximumMessagesPerRun - summary.messages));
         if (messagesResult.error) throw messagesResult.error;
         const expiredMessages = (messagesResult.data ?? []) as readonly ExpiredConversationMessage[];
         if (expiredMessages.length === 0) break;
@@ -103,17 +154,27 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
         const deletionResult = await client.from("conversation_messages").delete().in("id", messageIds);
         if (deletionResult.error) throw deletionResult.error;
-        summary.deletedMessages += messageIds.length;
-        summary.deletedMedia += storedMedia.length;
+        summary.messages += messageIds.length;
+        summary.mediaFiles += storedMedia.length;
       }
 
-      if (summary.deletedMessages >= maximumMessagesPerRun) break;
+      if (summary.messages >= maximumMessagesPerRun) break;
     }
 
-    return jsonResponse(200, { ...summary, maximumReached: summary.deletedMessages >= maximumMessagesPerRun });
+    return jsonResponse(200, dryRun ? {
+      mode: "preview",
+      matchedMessages: summary.messages,
+      matchedMediaFiles: summary.mediaFiles,
+      maximumReached: summary.messages >= maximumMessagesPerRun,
+    } : {
+      mode: "delete",
+      deletedMessages: summary.messages,
+      deletedMediaFiles: summary.mediaFiles,
+      maximumReached: summary.messages >= maximumMessagesPerRun,
+    });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Cleanup failed.";
+    const message = errorMessage(error);
     console.error(message);
-    return jsonResponse(500, { error: message, ...summary });
+    return jsonResponse(500, { error: message, processedMessages: summary.messages, processedMediaFiles: summary.mediaFiles });
   }
 });

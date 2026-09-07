@@ -206,6 +206,36 @@ export type Database = {
         };
         Relationships: [];
       };
+      horse_health_records: {
+        Row: {
+          id: string;
+          horse_id: string;
+          record_kind: Database["public"]["Enums"]["horse_health_record_kind"];
+          item_name: string;
+          recorded_on: string;
+          result_notes: string;
+          recorded_by: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          horse_id: string;
+          record_kind: Database["public"]["Enums"]["horse_health_record_kind"];
+          item_name: string;
+          recorded_on: string;
+          result_notes?: string;
+          recorded_by: string;
+          created_at?: string;
+        };
+        Update: {
+          record_kind?: Database["public"]["Enums"]["horse_health_record_kind"];
+          item_name?: string;
+          recorded_on?: string;
+          result_notes?: string;
+          recorded_by?: string;
+        };
+        Relationships: [];
+      };
       horse_conversations: {
         Row: {
           id: string;
@@ -526,6 +556,7 @@ export type Database = {
       app_role: "admin" | "stable_hand" | "owner";
       conversation_message_kind: "message" | "historical_update";
       horse_relationship: "primary_owner" | "family";
+      horse_health_record_kind: "vaccination" | "test" | "document";
       media_type: "photo" | "video";
       medication_status: "active" | "completed" | "discontinued";
       notification_kind: "weekly_update" | "reply" | "care_change" | "medication_change";

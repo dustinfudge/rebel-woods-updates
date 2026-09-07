@@ -13,6 +13,7 @@ import { PushNotificationManager } from "@/components/PushNotificationManager";
 import { StaffAlertBoard } from "@/components/StaffAlertBoard";
 import { synchronizeApplicationBadge } from "@/lib/applicationBadge";
 import { getPagesBasePath } from "@/lib/environment";
+import { formatHealthRecordDate, latestHealthRecords } from "@/lib/horseHealthRecords";
 import { getHorseNotificationCounts, getUnreadReplyCount } from "@/lib/notifications";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import type { Tables } from "@/types/supabase";
@@ -23,6 +24,7 @@ type Field = Tables<"fields">;
 type Herd = Tables<"herds">;
 type CareProfile = Tables<"care_profiles">;
 type Medication = Tables<"horse_medications">;
+type HealthRecord = Tables<"horse_health_records">;
 type HorseAccess = Tables<"horse_access">;
 type HorseConversation = Tables<"horse_conversations">;
 type Notification = Tables<"notifications">;
@@ -35,6 +37,7 @@ interface WorkspaceData {
   readonly herds: readonly Herd[];
   readonly careProfiles: readonly CareProfile[];
   readonly medications: readonly Medication[];
+  readonly healthRecords: readonly HealthRecord[];
   readonly horseAccess: readonly HorseAccess[];
   readonly conversations: readonly HorseConversation[];
   readonly profiles: readonly Profile[];
@@ -50,6 +53,7 @@ interface HorseDashboardItem {
   readonly thumbnailUrl: string | null;
   readonly careProfile: CareProfile | null;
   readonly activeMedications: readonly Medication[];
+  readonly healthRecords: readonly HealthRecord[];
   readonly conversation: HorseConversation;
   readonly daysSinceStaffCommunication: number;
   readonly unreadReplyCount: number;
@@ -62,7 +66,7 @@ interface WorkspaceNotice {
   readonly message: string;
 }
 
-const emptyWorkspaceData: WorkspaceData = { horses: [], fields: [], herds: [], careProfiles: [], medications: [], horseAccess: [], conversations: [], profiles: [], notifications: [], staffAlerts: [], staffAlertAcknowledgements: [] };
+const emptyWorkspaceData: WorkspaceData = { horses: [], fields: [], herds: [], careProfiles: [], medications: [], healthRecords: [], horseAccess: [], conversations: [], profiles: [], notifications: [], staffAlerts: [], staffAlertAcknowledgements: [] };
 const primaryButton = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#1d3528] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButton = "inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#cfd4ce] bg-white px-4 py-2 text-sm font-bold text-[#385943] disabled:opacity-50";
 
@@ -118,12 +122,13 @@ export function AppWorkspace(): React.JSX.Element {
 
   const loadWorkspace = useCallback(async (currentProfile: Profile, refreshThumbnails = false): Promise<WorkspaceData> => {
     const client = getSupabaseBrowserClient();
-    const [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult] = await Promise.all([
+    const [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, healthRecordsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult] = await Promise.all([
       client.from("horses").select("*").eq("is_active", true).order("name"),
       client.from("fields").select("*").eq("is_active", true).order("name"),
       client.from("herds").select("*").eq("is_active", true).order("name"),
       client.from("care_profiles").select("*").order("updated_at", { ascending: false }),
       client.from("horse_medications").select("*").order("starts_on", { ascending: false }),
+      client.from("horse_health_records").select("*").order("recorded_on", { ascending: false }),
       client.from("horse_access").select("*"),
       client.from("horse_conversations").select("*").order("last_staff_communication_at", { ascending: true, nullsFirst: true }),
       client.from("profiles").select("*").eq("is_active", true).order("full_name"),
@@ -131,7 +136,7 @@ export function AppWorkspace(): React.JSX.Element {
       client.from("staff_alerts").select("*").order("created_at", { ascending: false }),
       client.from("staff_alert_acknowledgements").select("*").order("acknowledged_at", { ascending: false }),
     ]);
-    const firstError = [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult].map((result) => result.error).find((error) => error !== null);
+    const firstError = [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, healthRecordsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult].map((result) => result.error).find((error) => error !== null);
     if (firstError) throw firstError;
     const horses = horsesResult.data ?? [];
     const loadedWorkspaceData: WorkspaceData = {
@@ -140,6 +145,7 @@ export function AppWorkspace(): React.JSX.Element {
       herds: herdsResult.data ?? [],
       careProfiles: careResult.data ?? [],
       medications: medicationsResult.data ?? [],
+      healthRecords: healthRecordsResult.data ?? [],
       horseAccess: accessResult.data ?? [],
       conversations: conversationsResult.data ?? [],
       profiles: profilesResult.data ?? [],
@@ -259,6 +265,7 @@ export function AppWorkspace(): React.JSX.Element {
       .on("postgres_changes", { event: "*", schema: "public", table: "fields" }, scheduleWorkspaceRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "care_profiles" }, scheduleWorkspaceRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "horse_medications" }, scheduleWorkspaceRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "horse_health_records" }, scheduleWorkspaceRefresh)
       .subscribe();
     return (): void => {
       if (refreshTimer) clearTimeout(refreshTimer);
@@ -284,6 +291,7 @@ export function AppWorkspace(): React.JSX.Element {
         thumbnailUrl: horse.photo_path ? thumbnailUrls[horse.photo_path] ?? null : null,
         careProfile: careByHorse.get(horse.id) ?? null,
         activeMedications: workspaceData.medications.filter((medication) => medication.horse_id === horse.id && medication.status === "active"),
+        healthRecords: workspaceData.healthRecords.filter((record) => record.horse_id === horse.id),
         conversation,
         daysSinceStaffCommunication,
         unreadReplyCount: notificationCounts.replyCount,
@@ -584,8 +592,27 @@ function CareSummary({ horseItem }: { readonly horseItem: HorseDashboardItem }):
   const careProfile = horseItem.careProfile;
   return <section className="rounded-3xl border border-[#dedfd8] bg-[#fffdf8] p-5"><div className="mb-4 flex items-center justify-between"><h2 className="font-serif text-2xl">Care card</h2>{careProfile?.special_requirements.trim() ? <span className="grid h-11 w-11 place-items-center rounded-full border-2 border-[#a65333] bg-[#f3ded3] text-[#a65333]"><ShieldAlert aria-label="Special care requirements" size={25} /></span> : null}</div><div className="space-y-4 text-sm"><CareValue label="AM FEED" value={careProfile?.am_feed} /><CareValue label="PM FEED" value={careProfile?.pm_feed} /><CareValue label="AM SUPPLEMENTS" value={careProfile?.supplements_am} /><CareValue label="PM SUPPLEMENTS" value={careProfile?.supplements_pm} />{careProfile?.special_requirements.trim() ? <div className="rounded-2xl border-2 border-[#a65333] bg-[#f3ded3] p-4 text-[#73391f]"><strong className="mb-1 flex items-center gap-2 text-sm font-extrabold uppercase tracking-[0.08em]"><ShieldAlert aria-hidden="true" size={19} />Special requirements</strong><p className="mb-0 whitespace-pre-wrap font-semibold leading-6">{careProfile.special_requirements}</p></div> : null}</div>
     {horseItem.activeMedications.length > 0 ? <div className="mt-5 border-t border-[#dedfd8] pt-5"><h3 className="mb-3 flex items-center gap-2 font-bold"><Pill size={17} />Current medications</h3><div className="space-y-3">{horseItem.activeMedications.map((medication) => <article className="rounded-2xl bg-[#f6e8c9] p-4 text-sm" key={medication.id}><strong className="block">{medication.name} · {medication.dosage}</strong><p className="mb-0 mt-1 whitespace-pre-wrap leading-5">{medication.instructions}</p>{medication.ends_on ? <small className="mt-2 block">Through {new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(`${medication.ends_on}T12:00:00`))}</small> : null}</article>)}</div></div> : null}
-    <div className="mt-5 border-t border-[#dedfd8] pt-5"><h3 className="mb-3 font-bold">Contacts & schedules</h3><CareValue label="Owner / family" value={horseItem.owners.map((owner) => `${owner.full_name}${owner.phone ? ` · ${owner.phone}` : ""}`).join("\n")} /><CareValue label="Veterinarian" value={[horseItem.horse.veterinarian_name, horseItem.horse.veterinarian_phone].filter(Boolean).join(" · ")} /><CareValue label="Farrier" value={[horseItem.horse.farrier_name, horseItem.horse.farrier_phone].filter(Boolean).join(" · ")} /><CareValue label="Deworming" value={horseItem.horse.deworming_schedule} /><CareValue label="Vaccines" value={horseItem.horse.vaccine_schedule} /></div>
+    <div className="mt-5 space-y-4 border-t border-[#dedfd8] pt-5"><h3 className="mb-3 font-bold">Contacts & schedules</h3><CareValue label="Owner / family" value={horseItem.owners.map((owner) => `${owner.full_name}${owner.phone ? ` · ${owner.phone}` : ""}`).join("\n")} /><CareValue label="Veterinarian" value={[horseItem.horse.veterinarian_name, horseItem.horse.veterinarian_phone].filter(Boolean).join(" · ")} /><CareValue label="Farrier" value={[horseItem.horse.farrier_name, horseItem.horse.farrier_phone].filter(Boolean).join(" · ")} /><CareValue label="Deworming" value={horseItem.horse.deworming_schedule} />{horseItem.horse.vaccine_schedule.trim() ? <CareValue label="Previous vaccine notes" value={horseItem.horse.vaccine_schedule} /> : null}<HealthRecordSummary records={horseItem.healthRecords} /></div>
   </section>;
+}
+
+function HealthRecordSummary({ records }: { readonly records: readonly HealthRecord[] }): React.JSX.Element {
+  const latestRecords = latestHealthRecords(records);
+  const vaccinations = latestRecords.filter((record) => record.record_kind === "vaccination");
+  const testsAndDocuments = latestRecords.filter((record) => record.record_kind !== "vaccination");
+  return <div className="space-y-4">
+    <ReadOnlyHealthRecordGroup records={vaccinations} title="Vaccines" />
+    <ReadOnlyHealthRecordGroup records={testsAndDocuments} title="Tests & documents" />
+    {records.length > 0 ? <details className="rounded-xl border border-[#dedfd8] bg-white p-3"><summary className="cursor-pointer text-sm font-bold text-[#385943]">View full health history · {records.length}</summary><div className="mt-3 space-y-2">{[...records].sort((left, right) => right.recorded_on.localeCompare(left.recorded_on)).map((record) => <ReadOnlyHealthRecord key={record.id} record={record} />)}</div></details> : null}
+  </div>;
+}
+
+function ReadOnlyHealthRecordGroup({ records, title }: { readonly records: readonly HealthRecord[]; readonly title: string }): React.JSX.Element {
+  return <div><strong className="mb-2 block text-sm font-extrabold uppercase tracking-[0.08em] text-[#1d3528]">{title}</strong>{records.length === 0 ? <p className="mb-0 text-[#293b31]">Not entered</p> : <div className="space-y-2">{records.map((record) => <ReadOnlyHealthRecord key={record.id} record={record} />)}</div>}</div>;
+}
+
+function ReadOnlyHealthRecord({ record }: { readonly record: HealthRecord }): React.JSX.Element {
+  return <div className="rounded-xl bg-[#f7f3e9] p-3 text-sm"><div className="flex flex-wrap items-start justify-between gap-2"><strong>{record.item_name}</strong><time className="font-bold text-[#385943]" dateTime={record.recorded_on}>{formatHealthRecordDate(record.recorded_on)}</time></div>{record.result_notes.trim() ? <p className="mb-0 mt-1 whitespace-pre-wrap text-[#68736b]">{record.result_notes}</p> : null}</div>;
 }
 
 function CareValue({ label, value }: { readonly label: string; readonly value?: string | null }): React.JSX.Element {

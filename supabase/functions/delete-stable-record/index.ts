@@ -90,7 +90,7 @@ async function selectMediaByUploader(client: SupabaseClient, profileId: string):
     client.from("message_media").select("storage_path").eq("uploaded_by", profileId),
   ]);
   const error = conversationResult.error ?? updateResult.error ?? messageResult.error;
-  if (error) throw error;
+  if (error) throw new Error(`Media lookup failed: ${error.message}`);
   const conversationPaths = (conversationResult.data ?? []) as readonly StoredMedia[];
   const updatePaths = (updateResult.data ?? []) as readonly { readonly storage_path: string }[];
   const messagePaths = (messageResult.data ?? []) as readonly { readonly storage_path: string }[];
@@ -107,17 +107,17 @@ async function selectHorseMedia(client: SupabaseClient, horse: HorseDeletionTarg
     client.from("horse_conversations").select("id").eq("horse_id", horse.id).maybeSingle(),
     client.from("weekly_updates").select("id").eq("horse_id", horse.id),
   ]);
-  if (conversationResult.error) throw conversationResult.error;
-  if (updateResult.error) throw updateResult.error;
+  if (conversationResult.error) throw new Error(`Conversation lookup failed: ${conversationResult.error.message}`);
+  if (updateResult.error) throw new Error(`Update lookup failed: ${updateResult.error.message}`);
 
   const conversationId = (conversationResult.data as IdentifiedRow | null)?.id;
   if (conversationId) {
     const messageResult = await client.from("conversation_messages").select("id").eq("conversation_id", conversationId);
-    if (messageResult.error) throw messageResult.error;
+    if (messageResult.error) throw new Error(`Message lookup failed: ${messageResult.error.message}`);
     const messageIds = ((messageResult.data ?? []) as readonly IdentifiedRow[]).map((message) => message.id);
     for (const messageIdBatch of chunkItems(messageIds, storageBatchSize)) {
       const mediaResult = await client.from("conversation_media").select("storage_bucket, storage_path").in("message_id", [...messageIdBatch]);
-      if (mediaResult.error) throw mediaResult.error;
+      if (mediaResult.error) throw new Error(`Conversation media lookup failed: ${mediaResult.error.message}`);
       paths.push(...((mediaResult.data ?? []) as readonly StoredMedia[]).map((item) => ({ bucket: item.storage_bucket, path: item.storage_path })));
     }
   }
@@ -128,13 +128,13 @@ async function selectHorseMedia(client: SupabaseClient, horse: HorseDeletionTarg
       client.from("update_media").select("storage_path").in("update_id", [...updateIdBatch]),
       client.from("messages").select("id").in("update_id", [...updateIdBatch]),
     ]);
-    if (updateMediaResult.error) throw updateMediaResult.error;
-    if (messageResult.error) throw messageResult.error;
+    if (updateMediaResult.error) throw new Error(`Update media lookup failed: ${updateMediaResult.error.message}`);
+    if (messageResult.error) throw new Error(`Reply lookup failed: ${messageResult.error.message}`);
     paths.push(...((updateMediaResult.data ?? []) as readonly { readonly storage_path: string }[]).map((item) => ({ bucket: "update-media", path: item.storage_path })));
     const messageIds = ((messageResult.data ?? []) as readonly IdentifiedRow[]).map((message) => message.id);
     for (const messageIdBatch of chunkItems(messageIds, storageBatchSize)) {
       const mediaResult = await client.from("message_media").select("storage_path").in("message_id", [...messageIdBatch]);
-      if (mediaResult.error) throw mediaResult.error;
+      if (mediaResult.error) throw new Error(`Reply media lookup failed: ${mediaResult.error.message}`);
       paths.push(...((mediaResult.data ?? []) as readonly { readonly storage_path: string }[]).map((item) => ({ bucket: "message-media", path: item.storage_path })));
     }
   }
@@ -189,24 +189,24 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     let storedPaths: readonly StoredPath[] = [];
     if (deletion.kind === "horse") {
-      const horseResult = await administratorClient.from("horses").select("id, organization_id, photo_path, is_active").eq("id", deletion.id).maybeSingle();
-      if (horseResult.error) throw horseResult.error;
+      const horseResult = await authenticatedClient.from("horses").select("id, organization_id, photo_path, is_active").eq("id", deletion.id).maybeSingle();
+      if (horseResult.error) throw new Error(`Horse lookup failed: ${horseResult.error.message}`);
       const horse = horseResult.data as HorseDeletionTarget | null;
       if (!horse || horse.organization_id !== profileResult.data.organization_id) return jsonResponse(404, { error: "Horse not found." });
       if (horse.is_active) return jsonResponse(409, { error: "Deactivate this horse before permanently deleting it." });
-      storedPaths = await selectHorseMedia(administratorClient, horse);
+      storedPaths = await selectHorseMedia(authenticatedClient, horse);
       const deletionResult = await authenticatedClient.rpc("permanently_delete_horse", { target_horse_id: horse.id });
-      if (deletionResult.error) throw deletionResult.error;
+      if (deletionResult.error) throw new Error(`Database deletion failed: ${deletionResult.error.message}`);
     } else {
-      const targetResult = await administratorClient.from("profiles").select("id, organization_id, role, is_active").eq("id", deletion.id).maybeSingle();
-      if (targetResult.error) throw targetResult.error;
+      const targetResult = await authenticatedClient.from("profiles").select("id, organization_id, role, is_active").eq("id", deletion.id).maybeSingle();
+      if (targetResult.error) throw new Error(`Person lookup failed: ${targetResult.error.message}`);
       const target = targetResult.data;
       if (!target || target.organization_id !== profileResult.data.organization_id) return jsonResponse(404, { error: "Person not found." });
       if (target.role === "admin") return jsonResponse(409, { error: "Administrator accounts cannot be permanently deleted." });
       if (target.is_active) return jsonResponse(409, { error: "Deactivate this person before permanently deleting them." });
-      storedPaths = await selectMediaByUploader(administratorClient, target.id);
+      storedPaths = await selectMediaByUploader(authenticatedClient, target.id);
       const deletionResult = await authenticatedClient.rpc("permanently_delete_person", { target_profile_id: target.id });
-      if (deletionResult.error) throw deletionResult.error;
+      if (deletionResult.error) throw new Error(`Database deletion failed: ${deletionResult.error.message}`);
       const authDeletionResult = await administratorClient.auth.admin.deleteUser(target.id);
       if (authDeletionResult.error) console.error(`Auth account cleanup failed: ${authDeletionResult.error.message}`);
     }

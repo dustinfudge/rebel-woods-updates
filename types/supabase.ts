@@ -70,6 +70,8 @@ export type Database = {
           veterinarian_phone: string;
           farrier_name: string;
           farrier_phone: string;
+          emergency_contact_name: string;
+          emergency_contact_phone: string;
           deworming_schedule: string;
           vaccine_schedule: string;
           field_id: string | null;
@@ -89,6 +91,8 @@ export type Database = {
           veterinarian_phone?: string;
           farrier_name?: string;
           farrier_phone?: string;
+          emergency_contact_name?: string;
+          emergency_contact_phone?: string;
           deworming_schedule?: string;
           vaccine_schedule?: string;
           field_id?: string | null;
@@ -106,6 +110,8 @@ export type Database = {
           veterinarian_phone?: string;
           farrier_name?: string;
           farrier_phone?: string;
+          emergency_contact_name?: string;
+          emergency_contact_phone?: string;
           deworming_schedule?: string;
           vaccine_schedule?: string;
           field_id?: string | null;

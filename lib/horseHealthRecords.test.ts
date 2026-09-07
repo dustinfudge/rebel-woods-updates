@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { latestHealthRecords, parseHealthRecordOption, vaccineOptions } from "@/lib/horseHealthRecords";
-import type { Tables } from "@/types/supabase";
+import { latestHealthRecords, parseHealthRecordOption, vaccineOptions } from "./horseHealthRecords";
+import type { Tables } from "../types/supabase";
 
 type HealthRecord = Tables<"horse_health_records">;
 

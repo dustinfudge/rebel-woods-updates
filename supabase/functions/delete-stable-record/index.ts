@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
-type DeletionKind = "horse" | "person";
+type DeletionKind = "conversation" | "horse" | "person";
 type StorageBucket = "conversation-media" | "horse-thumbnails" | "message-media" | "update-media";
 
 interface DeletionRequest {
@@ -68,7 +68,7 @@ function configuredSecretKey(): string | null {
 function parseDeletionRequest(value: unknown): DeletionRequest | null {
   if (!isRecord(value)) return null;
   const id = typeof value.id === "string" ? value.id.trim() : "";
-  const kind = value.kind === "horse" ? "horse" : value.kind === "person" ? "person" : null;
+  const kind = value.kind === "conversation" ? "conversation" : value.kind === "horse" ? "horse" : value.kind === "person" ? "person" : null;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) && kind ? { id, kind } : null;
 }
 
@@ -142,6 +142,24 @@ async function selectHorseMedia(client: SupabaseClient, horse: HorseDeletionTarg
   return uniqueStoragePaths(paths);
 }
 
+async function selectConversationMedia(client: SupabaseClient, horseId: string): Promise<readonly StoredPath[]> {
+  const conversationResult = await client.from("horse_conversations").select("id").eq("horse_id", horseId).maybeSingle();
+  if (conversationResult.error) throw new Error(`Conversation lookup failed: ${conversationResult.error.message}`);
+  const conversationId = (conversationResult.data as IdentifiedRow | null)?.id;
+  if (!conversationId) return [];
+
+  const messageResult = await client.from("conversation_messages").select("id").eq("conversation_id", conversationId);
+  if (messageResult.error) throw new Error(`Message lookup failed: ${messageResult.error.message}`);
+  const messageIds = ((messageResult.data ?? []) as readonly IdentifiedRow[]).map((message) => message.id);
+  const paths: StoredPath[] = [];
+  for (const messageIdBatch of chunkItems(messageIds, storageBatchSize)) {
+    const mediaResult = await client.from("conversation_media").select("storage_bucket, storage_path").in("message_id", [...messageIdBatch]);
+    if (mediaResult.error) throw new Error(`Conversation media lookup failed: ${mediaResult.error.message}`);
+    paths.push(...((mediaResult.data ?? []) as readonly StoredMedia[]).map((item) => ({ bucket: item.storage_bucket, path: item.storage_path })));
+  }
+  return uniqueStoragePaths(paths);
+}
+
 async function removeStoredFiles(client: SupabaseClient, paths: readonly StoredPath[]): Promise<readonly string[]> {
   const failures: string[] = [];
   const pathsByBucket = new Map<StorageBucket, string[]>();
@@ -197,6 +215,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
       storedPaths = await selectHorseMedia(authenticatedClient, horse);
       const deletionResult = await authenticatedClient.rpc("permanently_delete_horse", { target_horse_id: horse.id });
       if (deletionResult.error) throw new Error(`Database deletion failed: ${deletionResult.error.message}`);
+    } else if (deletion.kind === "conversation") {
+      const horseResult = await authenticatedClient.from("horses").select("id, organization_id").eq("id", deletion.id).maybeSingle();
+      if (horseResult.error) throw new Error(`Horse lookup failed: ${horseResult.error.message}`);
+      const horse = horseResult.data;
+      if (!horse || horse.organization_id !== profileResult.data.organization_id) return jsonResponse(404, { error: "Horse not found." });
+      storedPaths = await selectConversationMedia(authenticatedClient, horse.id);
+      const deletionResult = await authenticatedClient.rpc("permanently_clear_horse_conversation", { target_horse_id: horse.id });
+      if (deletionResult.error) throw new Error(`Conversation deletion failed: ${deletionResult.error.message}`);
     } else {
       const targetResult = await authenticatedClient.from("profiles").select("id, organization_id, role, is_active").eq("id", deletion.id).maybeSingle();
       if (targetResult.error) throw new Error(`Person lookup failed: ${targetResult.error.message}`);

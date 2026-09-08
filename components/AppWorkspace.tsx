@@ -1,7 +1,7 @@
 "use client";
 
 import type { RealtimePostgresInsertPayload } from "@supabase/supabase-js";
-import { AlertCircle, ArrowLeft, Bell, LogOut, MapPin, Pill, Settings, ShieldAlert } from "lucide-react";
+import { AlertCircle, ArrowLeft, Bell, LogOut, MapPin, Pill, Settings, ShieldAlert, Trash2 } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -73,6 +73,24 @@ const secondaryButton = "inline-flex min-h-10 items-center justify-center gap-2 
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
+}
+
+async function functionErrorMessage(error: unknown): Promise<string> {
+  if (typeof error === "object" && error !== null && "context" in error && error.context instanceof Response) {
+    const responseBody: unknown = await error.context.clone().json().catch((): null => null);
+    if (typeof responseBody === "object" && responseBody !== null && "error" in responseBody && typeof responseBody.error === "string") {
+      return responseBody.error;
+    }
+  }
+  return errorMessage(error);
+}
+
+function confirmConversationClear(horseName: string): boolean {
+  const confirmation = window.prompt(`Permanently clear every message, photo, video, and read receipt in ${horseName}’s conversation? Type ${horseName} to confirm.`);
+  if (confirmation === null) return false;
+  if (confirmation.trim() === horseName) return true;
+  window.alert(`Nothing was deleted. The confirmation must exactly match ${horseName}.`);
+  return false;
 }
 
 function roleLabel(profile: Profile): string {
@@ -357,6 +375,20 @@ export function AppWorkspace(): React.JSX.Element {
     }));
   }
 
+  async function permanentlyClearConversation(horseId: string, horseName: string): Promise<boolean> {
+    if (profile?.role !== "admin" || !confirmConversationClear(horseName)) return false;
+    setNotice(null);
+    const { error } = await getSupabaseBrowserClient().functions.invoke("delete-stable-record", { body: { id: horseId, kind: "conversation" } });
+    if (error) {
+      setNotice({ tone: "error", message: await functionErrorMessage(error) });
+      return false;
+    }
+    await loadWorkspace(profile);
+    setSelectedHorseId(null);
+    setNotice({ tone: "success", message: `${horseName}’s conversation was permanently cleared.` });
+    return true;
+  }
+
   async function acknowledgeStaffAlert(alertId: string): Promise<boolean> {
     if (!profile || profile.role === "owner") return false;
     const { data: acknowledgedAt, error } = await getSupabaseBrowserClient().rpc("acknowledge_staff_alert", { target_alert_id: alertId });
@@ -468,7 +500,7 @@ export function AppWorkspace(): React.JSX.Element {
     <header className="sticky top-0 z-20 border-b border-[#dedfd8] bg-[#fffdf8]/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-6xl items-center justify-between gap-3"><div><strong className="block font-serif text-xl">Rebel Woods</strong><small className="font-bold uppercase tracking-[0.14em] text-[#a65333]">{roleLabel(profile)}</small></div><div className="flex items-center gap-2"><PushNotificationManager unreadMessageCount={unreadMessageCount} userId={profile.id} />{profile.role === "admin" ? <a className={secondaryButton} href={`${getPagesBasePath()}/setup/`}><Settings size={16} /><span className="hidden sm:inline">Setup</span></a> : null}<button aria-label="Sign out" className="grid h-10 w-10 place-items-center rounded-full border border-[#dedfd8] bg-white" onClick={() => void synchronizeApplicationBadge(0).finally(() => getSupabaseBrowserClient().auth.signOut())} type="button"><LogOut size={17} /></button></div></div></header>
     <main className="mx-auto max-w-6xl px-4 py-7 sm:px-5 sm:py-10">
       {notice ? <div className={`mb-5 rounded-2xl border p-4 text-sm font-semibold ${notice.tone === "success" ? "border-[#b8c9bb] bg-[#e4ece4] text-[#1d3528]" : "border-[#e1b8a6] bg-[#f3ded3] text-[#73391f]"}`} role="status">{notice.message}</div> : null}
-      {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onFieldUpdate={updateHorseField} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : isManagingHerds && profile.role === "admin" ? <HerdBoard fields={workspaceData.fields} herds={workspaceData.herds.map((herd) => ({ fieldId: herd.field_id, id: herd.id, name: herd.name }))} horses={horseItems.map((item) => ({ herdId: item.horse.herd_id, id: item.horse.id, name: item.horse.name, thumbnailUrl: item.thumbnailUrl }))} onBack={() => { setIsManagingHerds(false); setNotice(null); }} onCreateHerd={createHorseHerd} onMoveHerdField={updateHerdField} onMoveHorse={updateHorseHerd} /> : <Dashboard acknowledgements={workspaceData.staffAlertAcknowledgements} alerts={workspaceData.staffAlerts} fields={workspaceData.fields} horses={horseItems} isStaff={isStaff} people={workspaceData.profiles} profile={profile} onAcknowledgeAlert={acknowledgeStaffAlert} onArchiveAlert={archiveStaffAlert} onCreateCustomAlert={createCustomStaffAlert} onDeleteAlert={deleteStaffAlert} onManageHerds={() => { setIsManagingHerds(true); setNotice(null); }} onOpenHorse={(horseId) => void openHorse(horseId)} />}
+      {selectedHorse ? <HorseWorkspace fields={workspaceData.fields} horseItem={selectedHorse} participants={participants} profile={profile} onBack={() => { setSelectedHorseId(null); setNotice(null); }} onClearConversation={permanentlyClearConversation} onFieldUpdate={updateHorseField} onMessageSent={(createdAt) => recordConversationMessage(selectedHorse.conversation.id, createdAt)} /> : isManagingHerds && profile.role === "admin" ? <HerdBoard fields={workspaceData.fields} herds={workspaceData.herds.map((herd) => ({ fieldId: herd.field_id, id: herd.id, name: herd.name }))} horses={horseItems.map((item) => ({ herdId: item.horse.herd_id, id: item.horse.id, name: item.horse.name, thumbnailUrl: item.thumbnailUrl }))} onBack={() => { setIsManagingHerds(false); setNotice(null); }} onCreateHerd={createHorseHerd} onMoveHerdField={updateHerdField} onMoveHorse={updateHorseHerd} /> : <Dashboard acknowledgements={workspaceData.staffAlertAcknowledgements} alerts={workspaceData.staffAlerts} fields={workspaceData.fields} horses={horseItems} isStaff={isStaff} people={workspaceData.profiles} profile={profile} onAcknowledgeAlert={acknowledgeStaffAlert} onArchiveAlert={archiveStaffAlert} onCreateCustomAlert={createCustomStaffAlert} onDeleteAlert={deleteStaffAlert} onManageHerds={() => { setIsManagingHerds(true); setNotice(null); }} onOpenHorse={(horseId) => void openHorse(horseId)} />}
     </main>
   </div>;
 }
@@ -497,7 +529,7 @@ function Dashboard({ acknowledgements, alerts, fields, horses, isStaff, people, 
 
     {isStaff ? <FieldsHerdsOverview fields={fields} horses={horses} isAdmin={profile.role === "admin"} onManage={onManageHerds} /> : null}
 
-    {horses.length > 0 ? <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4" aria-label="Horses">{horses.map((item) => <HorseCard item={item} key={item.horse.id} onOpen={() => onOpenHorse(item.horse.id)} />)}</section> : <section className="rounded-3xl border border-dashed border-[#bfc6bf] bg-[#fffdf8] p-10 text-center"><h2 className="mb-2 font-serif text-3xl">No horses to show</h2><p className="mb-0 text-[#68736b]">An administrator can add the first horse in Setup.</p></section>}
+    {horses.length > 0 ? <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4" aria-label="Horses">{horses.map((item) => <HorseCard item={item} key={item.horse.id} onOpen={() => onOpenHorse(item.horse.id)} showCommunicationAge={isStaff} />)}</section> : <section className="rounded-3xl border border-dashed border-[#bfc6bf] bg-[#fffdf8] p-10 text-center"><h2 className="mb-2 font-serif text-3xl">No horses to show</h2><p className="mb-0 text-[#68736b]">An administrator can add the first horse in Setup.</p></section>}
   </>;
 }
 
@@ -529,15 +561,16 @@ function FieldsHerdsOverview({ fields, horses, isAdmin, onManage }: FieldsHerdsO
 interface HorseCardProps {
   readonly item: HorseDashboardItem;
   readonly onOpen: () => void;
+  readonly showCommunicationAge: boolean;
 }
 
-function HorseCard({ item, onOpen }: HorseCardProps): React.JSX.Element {
+function HorseCard({ item, onOpen, showCommunicationAge }: HorseCardProps): React.JSX.Element {
   const communication = communicationPresentation(item.daysSinceStaffCommunication);
   const hasSpecialRequirements = Boolean(item.careProfile?.special_requirements.trim());
   return <button className="group overflow-hidden rounded-2xl border border-[#dedfd8] bg-[#fffdf8] text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[#385943] sm:rounded-[1.75rem]" onClick={onOpen} type="button">
     <div className="relative aspect-[5/4] overflow-hidden bg-[#dfe5df] sm:aspect-[4/3]">
       {item.thumbnailUrl ? <Image alt={`${item.horse.name} thumbnail`} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" decoding="async" height={540} loading="lazy" src={item.thumbnailUrl} unoptimized width={720} /> : <div className="grid h-full place-items-center font-serif text-4xl text-[#789080] sm:text-6xl">{item.horse.name.slice(0, 1).toUpperCase()}</div>}
-      <span aria-label={`${communication.label} since last staff contact`} className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[10px] font-bold shadow-sm sm:bottom-auto sm:left-3 sm:top-3 sm:px-3 sm:text-xs ${communication.className}`}>{communication.label}</span>
+      {showCommunicationAge ? <span aria-label={`${communication.label} since last staff contact`} className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[10px] font-bold shadow-sm sm:bottom-auto sm:left-3 sm:top-3 sm:px-3 sm:text-xs ${communication.className}`}>{communication.label}</span> : null}
       {item.unreadReplyCount > 0 ? <span aria-label={`${item.unreadReplyCount} unread ${item.unreadReplyCount === 1 ? "message" : "messages"}`} className="absolute right-2 top-2 inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#1f5f8b] px-2 text-xs font-extrabold text-white shadow-lg ring-2 ring-white">{item.unreadReplyCount}</span> : item.unreadAlertCount > 0 ? <span aria-label={`${item.unreadAlertCount} unread care ${item.unreadAlertCount === 1 ? "alert" : "alerts"}`} className="absolute right-2 top-2 inline-flex min-h-7 min-w-7 items-center justify-center rounded-full bg-[#f6e8c9] px-2 text-[10px] font-extrabold text-[#75520e] shadow-lg ring-2 ring-white"><Bell aria-hidden="true" className="mr-1" size={13} />{item.unreadAlertCount}</span> : null}
     </div>
     <span className="block p-3 sm:p-5"><strong className="block truncate font-serif text-xl sm:text-3xl">{item.horse.name}</strong>{hasSpecialRequirements ? <span className="mt-2 flex items-center gap-1.5 rounded-lg border-2 border-[#a65333] bg-[#f3ded3] px-2 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.06em] text-[#73391f] sm:mt-4 sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2 sm:text-xs"><ShieldAlert aria-hidden="true" size={16} /><span className="sm:hidden">Special</span><span className="hidden sm:inline">Special requirements</span></span> : null}{item.activeMedications.length > 0 ? <span className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-[#f6e8c9] px-2 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.06em] text-[#75520e] sm:mt-2 sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2 sm:text-xs"><Pill aria-hidden="true" size={15} /><span className="sm:hidden">Medication</span><span className="hidden sm:inline">Current medication</span></span> : null}</span>
@@ -550,11 +583,12 @@ interface HorseWorkspaceProps {
   readonly participants: Readonly<Record<string, ChatParticipant>>;
   readonly profile: Profile;
   readonly onBack: () => void;
+  readonly onClearConversation: (horseId: string, horseName: string) => Promise<boolean>;
   readonly onFieldUpdate: (horseId: string, fieldId: string | null) => Promise<boolean>;
   readonly onMessageSent: (createdAt: string) => void;
 }
 
-function HorseWorkspace({ fields, horseItem, participants, profile, onBack, onFieldUpdate, onMessageSent }: HorseWorkspaceProps): React.JSX.Element {
+function HorseWorkspace({ fields, horseItem, participants, profile, onBack, onClearConversation, onFieldUpdate, onMessageSent }: HorseWorkspaceProps): React.JSX.Element {
   const [isEditingLocation, setIsEditingLocation] = useState(false);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const communication = communicationPresentation(horseItem.daysSinceStaffCommunication);
@@ -576,11 +610,14 @@ function HorseWorkspace({ fields, horseItem, participants, profile, onBack, onFi
     <button className={`${secondaryButton} mb-5`} onClick={onBack} type="button"><ArrowLeft size={16} />All horses</button>
     <section className="mb-7 grid overflow-hidden rounded-[2rem] bg-[#1d3528] text-white shadow-xl md:grid-cols-[minmax(16rem,0.8fr)_1.2fr]">
       <div className="aspect-[4/3] bg-[#385943] md:aspect-auto">{horseItem.thumbnailUrl ? <Image alt={horseItem.horse.name} className="h-full min-h-64 w-full object-cover" height={700} src={horseItem.thumbnailUrl} unoptimized width={900} /> : <div className="grid h-full min-h-64 place-items-center font-serif text-8xl text-[#9fb0a3]">{horseItem.horse.name.slice(0, 1).toUpperCase()}</div>}</div>
-      <div className="p-7 sm:p-9"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><p className="mb-0 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]">Horse information</p><span className={`rounded-full px-3 py-1 text-xs font-bold ${communication.className}`}>{communication.label}</span></div><h1 className="mb-5 font-serif text-5xl">{horseItem.horse.name}</h1><div className="grid gap-3 sm:grid-cols-2"><HorseInformationTile label="Field" value={horseItem.fieldName} /><HorseInformationTile label="Herd" value={horseItem.herdName} /><HorseInformationTile label="Type" value={horseItem.horse.horse_type || "Not entered"} /><HorseInformationTile label="Born" value={horseItem.horse.birth_year?.toString() ?? "Not entered"} /></div>{profile.role === "admin" ? <button className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 text-sm font-bold text-white" onClick={() => setIsEditingLocation((currentValue) => !currentValue)} type="button"><MapPin size={16} />Change field</button> : null}{isEditingLocation ? <form className="mt-4 grid gap-3 rounded-2xl bg-white/10 p-4" onSubmit={(event) => void saveField(event)}><label className="text-xs font-bold">Field<select className="mt-1 min-h-11 w-full rounded-xl bg-white px-3 text-sm text-[#1d3528]" defaultValue={horseItem.horse.field_id ?? ""} name="fieldId"><option value="">Unassigned</option>{fields.filter((field) => field.is_active).map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select></label><button className="min-h-11 rounded-full bg-[#d9a27b] px-4 text-sm font-bold text-[#1d3528]" disabled={isSavingLocation} type="submit">{isSavingLocation ? "Saving…" : "Save field"}</button></form> : null}</div>
+      <div className="p-7 sm:p-9"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><p className="mb-0 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]">Horse information</p>{profile.role !== "owner" ? <span className={`rounded-full px-3 py-1 text-xs font-bold ${communication.className}`}>{communication.label}</span> : null}</div><h1 className="mb-5 font-serif text-5xl">{horseItem.horse.name}</h1><div className="grid gap-3 sm:grid-cols-2"><HorseInformationTile label="Field" value={horseItem.fieldName} /><HorseInformationTile label="Herd" value={horseItem.herdName} /><HorseInformationTile label="Type" value={horseItem.horse.horse_type || "Not entered"} /><HorseInformationTile label="Born" value={horseItem.horse.birth_year?.toString() ?? "Not entered"} /></div>{profile.role === "admin" ? <button className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 text-sm font-bold text-white" onClick={() => setIsEditingLocation((currentValue) => !currentValue)} type="button"><MapPin size={16} />Change field</button> : null}{isEditingLocation ? <form className="mt-4 grid gap-3 rounded-2xl bg-white/10 p-4" onSubmit={(event) => void saveField(event)}><label className="text-xs font-bold">Field<select className="mt-1 min-h-11 w-full rounded-xl bg-white px-3 text-sm text-[#1d3528]" defaultValue={horseItem.horse.field_id ?? ""} name="fieldId"><option value="">Unassigned</option>{fields.filter((field) => field.is_active).map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select></label><button className="min-h-11 rounded-full bg-[#d9a27b] px-4 text-sm font-bold text-[#1d3528]" disabled={isSavingLocation} type="submit">{isSavingLocation ? "Saving…" : "Save field"}</button></form> : null}</div>
     </section>
 
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
-      <ConversationTimeline conversationId={horseItem.conversation.id} currentUserId={profile.id} horseId={horseItem.horse.id} horseName={horseItem.horse.name} organizationId={profile.organization_id} participants={participants} onMessageSent={onMessageSent} />
+      <div className="space-y-3">
+        <ConversationTimeline conversationId={horseItem.conversation.id} currentUserId={profile.id} horseId={horseItem.horse.id} horseName={horseItem.horse.name} organizationId={profile.organization_id} participants={participants} onMessageSent={onMessageSent} />
+        {profile.role === "admin" ? <section className="rounded-2xl border border-[#d7a18b] bg-[#fff7f2] p-4"><h2 className="mb-1 text-sm font-bold text-[#8b3e22]">Remove test conversation</h2><p className="mb-3 text-xs leading-5 text-[#734b3c]">Permanently deletes every message, photo, video, notification, and read receipt for this horse. The horse and care card remain unchanged.</p><button className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#d7a18b] bg-white px-4 py-2 text-sm font-bold text-[#8b3e22]" onClick={() => void onClearConversation(horseItem.horse.id, horseItem.horse.name)} type="button"><Trash2 size={16} />Clear conversation</button></section> : null}
+      </div>
 
       <aside className="space-y-6">
         <CareSummary canContactOwners={profile.role !== "owner"} horseItem={horseItem} />

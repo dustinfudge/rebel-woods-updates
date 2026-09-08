@@ -553,6 +553,7 @@ export type Database = {
       create_herd_for_horse: { Args: { target_horse_id: string }; Returns: string };
       create_custom_staff_alert: { Args: { alert_message: string }; Returns: string };
       delete_archived_staff_alert: { Args: { target_alert_id: string }; Returns: undefined };
+      permanently_clear_horse_conversation: { Args: { target_horse_id: string }; Returns: undefined };
       move_herd_to_field: { Args: { target_field_id: string | null; target_herd_id: string }; Returns: undefined };
       move_horse_to_field: { Args: { target_field_id: string | null; target_horse_id: string }; Returns: undefined };
       move_horse_to_herd: { Args: { target_herd_id: string | null; target_horse_id: string }; Returns: undefined };

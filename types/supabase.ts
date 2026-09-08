@@ -68,6 +68,7 @@ export type Database = {
           birth_year: number | null;
           veterinarian_name: string;
           veterinarian_phone: string;
+          veterinarian_emergency_phone: string;
           farrier_name: string;
           farrier_phone: string;
           emergency_contact_name: string;
@@ -89,6 +90,7 @@ export type Database = {
           birth_year?: number | null;
           veterinarian_name?: string;
           veterinarian_phone?: string;
+          veterinarian_emergency_phone?: string;
           farrier_name?: string;
           farrier_phone?: string;
           emergency_contact_name?: string;
@@ -108,6 +110,7 @@ export type Database = {
           birth_year?: number | null;
           veterinarian_name?: string;
           veterinarian_phone?: string;
+          veterinarian_emergency_phone?: string;
           farrier_name?: string;
           farrier_phone?: string;
           emergency_contact_name?: string;

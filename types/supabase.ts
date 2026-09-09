@@ -142,6 +142,27 @@ export type Database = {
         Update: { relationship?: Database["public"]["Enums"]["horse_relationship"] };
         Relationships: [];
       };
+      horse_emergency_contacts: {
+        Row: {
+          id: string;
+          horse_id: string;
+          name: string;
+          phone: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          horse_id: string;
+          name: string;
+          phone?: string;
+          created_at?: string;
+        };
+        Update: {
+          name?: string;
+          phone?: string;
+        };
+        Relationships: [];
+      };
       care_profiles: {
         Row: {
           horse_id: string;

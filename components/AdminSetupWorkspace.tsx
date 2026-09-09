@@ -26,12 +26,13 @@ type Herd = Tables<"herds">;
 type Horse = Tables<"horses">;
 type CareProfile = Tables<"care_profiles">;
 type HorseAccess = Tables<"horse_access">;
+type EmergencyContact = Tables<"horse_emergency_contacts">;
 type Medication = Tables<"horse_medications">;
 type HealthRecord = Tables<"horse_health_records">;
 type AppRole = Database["public"]["Enums"]["app_role"];
 type Relationship = Database["public"]["Enums"]["horse_relationship"];
 type Section = "locations" | "horses" | "people";
-type HorseInformationUpdate = Pick<Database["public"]["Tables"]["horses"]["Update"], "horse_type" | "birth_year" | "veterinarian_name" | "veterinarian_phone" | "veterinarian_emergency_phone" | "farrier_name" | "farrier_phone" | "emergency_contact_name" | "emergency_contact_phone" | "deworming_schedule" | "vaccine_schedule">;
+type HorseInformationUpdate = Pick<Database["public"]["Tables"]["horses"]["Update"], "horse_type" | "birth_year" | "veterinarian_name" | "veterinarian_phone" | "veterinarian_emergency_phone" | "farrier_name" | "farrier_phone" | "deworming_schedule" | "vaccine_schedule">;
 
 interface SetupData {
   organization: Organization | null;
@@ -41,6 +42,7 @@ interface SetupData {
   care: readonly CareProfile[];
   profiles: readonly Profile[];
   access: readonly HorseAccess[];
+  emergencyContacts: readonly EmergencyContact[];
   medications: readonly Medication[];
   healthRecords: readonly HealthRecord[];
 }
@@ -50,6 +52,7 @@ interface HorseView extends Horse {
   herdName: string;
   thumbnailUrl: string | null;
   careProfile: CareProfile | null;
+  emergencyContacts: readonly EmergencyContact[];
   medications: readonly Medication[];
   healthRecords: readonly HealthRecord[];
 }
@@ -65,7 +68,7 @@ interface PreparedThumbnailUpload {
   extension: "heic" | "jpg" | "png" | "webp";
 }
 
-const emptyData: SetupData = { organization: null, fields: [], herds: [], horses: [], care: [], profiles: [], access: [], medications: [], healthRecords: [] };
+const emptyData: SetupData = { organization: null, fields: [], herds: [], horses: [], care: [], profiles: [], access: [], emergencyContacts: [], medications: [], healthRecords: [] };
 const input = "min-h-12 w-full rounded-xl border border-[#cfd4ce] bg-white px-4 text-base outline-none focus:border-[#385943] focus:ring-2 focus:ring-[#385943]/10";
 const area = `${input} min-h-24 resize-y py-3 leading-6`;
 const primary = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#1d3528] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50";
@@ -112,8 +115,6 @@ function horseInformationFrom(formData: FormData): HorseInformationUpdate {
     veterinarian_emergency_phone: value(formData, "veterinarianEmergencyPhone"),
     farrier_name: value(formData, "farrierName"),
     farrier_phone: value(formData, "farrierPhone"),
-    emergency_contact_name: value(formData, "emergencyContactName"),
-    emergency_contact_phone: value(formData, "emergencyContactPhone"),
     deworming_schedule: value(formData, "dewormingSchedule"),
     vaccine_schedule: value(formData, "vaccineSchedule"),
   };
@@ -198,6 +199,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       client.from("horse_access").select("*").order("created_at"),
       client.from("horse_medications").select("*").order("starts_on", { ascending: false }),
       client.from("horse_health_records").select("*").order("recorded_on", { ascending: false }),
+      client.from("horse_emergency_contacts").select("*").order("created_at"),
       client.from("organizations").select("*").eq("id", administrator.organization_id).single(),
     ]);
     const firstError = results.map((result) => result.error).find((error) => error !== null);
@@ -214,13 +216,14 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       setThumbnailUrls(signedThumbnailUrls);
     }
     setData({
-      organization: results[8].data,
+      organization: results[9].data,
       fields: results[0].data ?? [],
       herds: results[1].data ?? [],
       horses: loadedHorses,
       care: results[3].data ?? [], profiles: results[4].data ?? [], access: results[5].data ?? [],
       medications: results[6].data ?? [],
       healthRecords: results[7].data ?? [],
+      emergencyContacts: results[8].data ?? [],
     });
   }, []);
 
@@ -269,6 +272,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       careProfile: careByHorse.get(horse.id) ?? null,
       medications: data.medications.filter((medication) => medication.horse_id === horse.id),
       healthRecords: data.healthRecords.filter((record) => record.horse_id === horse.id),
+      emergencyContacts: data.emergencyContacts.filter((contact) => contact.horse_id === horse.id),
     }));
   }, [data, thumbnailUrls]);
   const horses = horseViews.filter((horse) => horse.is_active);
@@ -496,6 +500,32 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     });
   }
 
+  async function addEmergencyContact(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!selectedHorse) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    await mutate(async () => {
+      const { error } = await getSupabaseBrowserClient().from("horse_emergency_contacts").insert({
+        horse_id: selectedHorse.id,
+        name: value(formData, "emergencyContactName"),
+        phone: value(formData, "emergencyContactPhone"),
+      });
+      if (error) throw error;
+      form.reset();
+      await refresh(`Emergency contact added for ${selectedHorse.name}.`);
+    });
+  }
+
+  async function deleteEmergencyContact(contact: EmergencyContact): Promise<void> {
+    if (!window.confirm(`Remove ${contact.name} from this horse’s emergency contacts?`)) return;
+    await mutate(async () => {
+      const { error } = await getSupabaseBrowserClient().from("horse_emergency_contacts").delete().eq("id", contact.id);
+      if (error) throw error;
+      await refresh(`${contact.name} was removed from the emergency contacts.`);
+    });
+  }
+
   async function invite(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = event.currentTarget;
@@ -577,7 +607,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
           <Tab active={section === "locations"} complete={data.fields.length > 0 && data.herds.length > 0} icon={<MapPin size={18} />} label="3. Fields & herds" onClick={() => setSection("locations")} />
         </nav>
         {section === "locations" ? <Locations fields={data.fields} herds={data.herds} retentionDays={data.organization?.update_retention_days ?? 180} saving={saving} onAdd={addLocation} onUpdateRetention={updateRetention} /> : null}
-        {section === "horses" ? <Horses access={data.access} archivedHorses={archivedHorses} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddHealthRecord={addHealthRecord} onAddMedication={addMedication} onArchive={archiveHorse} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onDelete={permanentlyDeleteHorse} onDeleteHealthRecord={deleteHealthRecord} onRestore={restoreHorse} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
+        {section === "horses" ? <Horses access={data.access} archivedHorses={archivedHorses} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddEmergencyContact={addEmergencyContact} onAddHealthRecord={addHealthRecord} onAddMedication={addMedication} onArchive={archiveHorse} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onDelete={permanentlyDeleteHorse} onDeleteEmergencyContact={deleteEmergencyContact} onDeleteHealthRecord={deleteHealthRecord} onRestore={restoreHorse} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
         {section === "people" ? <People access={data.access} currentProfileId={profile.id} horses={horses} owners={owners} profiles={data.profiles} saving={saving} onContinue={() => setSection("locations")} onDelete={permanentlyDeletePerson} onGrant={grantAccess} onInvite={invite} onRemoveAccess={removeHorseAccess} onSetActive={setPersonActive} onUpdatePhone={updatePersonPhone} /> : null}
       </div>
     </div>
@@ -635,10 +665,12 @@ function CareFields({ care }: { readonly care?: CareProfile | null }): React.JSX
 interface HorseSectionProps {
   access: readonly HorseAccess[]; archivedHorses: readonly HorseView[]; horses: readonly HorseView[]; profiles: readonly Profile[]; saving: boolean; selectedHorse: HorseView | null;
   onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onAddEmergencyContact: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onAddHealthRecord: (event: FormEvent<HTMLFormElement>, options: readonly HealthRecordOption[]) => Promise<void>;
   onAddMedication: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onArchive: (horse: Horse) => Promise<void>; onCompleteMedication: (medication: Medication) => Promise<void>; onContinue: () => void;
   onDelete: (horse: Horse) => Promise<void>;
+  onDeleteEmergencyContact: (contact: EmergencyContact) => Promise<void>;
   onDeleteHealthRecord: (record: HealthRecord) => Promise<void>;
   onRestore: (horse: Horse) => Promise<void>; onSelect: (id: string | null) => void;
   onUpdateCare: (event: FormEvent<HTMLFormElement>) => Promise<void>;
@@ -646,13 +678,13 @@ interface HorseSectionProps {
 }
 
 function Horses(props: HorseSectionProps): React.JSX.Element {
-  const { access, archivedHorses, horses, profiles, saving, selectedHorse, onAdd, onAddHealthRecord, onAddMedication, onArchive, onCompleteMedication, onContinue, onDelete, onDeleteHealthRecord, onRestore, onSelect, onUpdateCare, onUpdateInformation } = props;
+  const { access, archivedHorses, horses, profiles, saving, selectedHorse, onAdd, onAddEmergencyContact, onAddHealthRecord, onAddMedication, onArchive, onCompleteMedication, onContinue, onDelete, onDeleteEmergencyContact, onDeleteHealthRecord, onRestore, onSelect, onUpdateCare, onUpdateInformation } = props;
   const people = new Map(profiles.map((person) => [person.id, person]));
   const ownerContacts = selectedHorse ? access.filter((permission) => permission.horse_id === selectedHorse.id).flatMap((permission) => {
     const owner = people.get(permission.profile_id);
     return owner?.role === "owner" && owner.is_active ? [{ owner, relationship: permission.relationship }] : [];
   }) : [];
-  return <section><Intro step="Step one" title="Add horses, information, and care instructions.">Only administrators can change this information. Special requirement changes automatically alert administrators and Rebel Wranglers.</Intro><div className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]"><Card title="Your horses" description={`${horses.length} active ${horses.length === 1 ? "horse" : "horses"}`}><div className="space-y-2">{horses.length === 0 ? <Empty>No horses added yet.</Empty> : horses.map((horse) => <button className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${selectedHorse?.id === horse.id ? "border-[#385943] bg-[#e4ece4]" : "border-[#dedfd8] bg-white"}`} key={horse.id} onClick={() => onSelect(horse.id)} type="button">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-12 w-12 shrink-0 rounded-full bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#1d3528] font-serif text-white">{horse.name[0]}</span>}<span className="min-w-0 flex-1"><strong className="block truncate">{horse.name}</strong><small className="block truncate text-[#68736b]">{horse.fieldName} · {horse.herdName}</small></span><ArrowRight size={17} /></button>)}</div><ArchivedHorseList horses={archivedHorses} saving={saving} onDelete={onDelete} onRestore={onRestore} /></Card>{selectedHorse ? <div className="space-y-5"><HorseInformationCard horse={selectedHorse} ownerContacts={ownerContacts} saving={saving} onArchive={onArchive} onUpdate={onUpdateInformation} /><HealthRecordsCard horse={selectedHorse} saving={saving} onAdd={onAddHealthRecord} onDelete={onDeleteHealthRecord} /><Card title={`${selectedHorse.name}’s Care Card`} description="Feed, supplements, and daily instructions"><form className="space-y-4" key={selectedHorse.careProfile?.updated_at ?? selectedHorse.id} onSubmit={(event) => void onUpdateCare(event)}><CareFields care={selectedHorse.careProfile} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save care card</button></form></Card><MedicationCard horse={selectedHorse} saving={saving} onAdd={onAddMedication} onComplete={onCompleteMedication} /></div> : <AddHorseCard saving={saving} onAdd={onAdd} />}</div>{selectedHorse ? <button className={`${secondary} mt-5`} onClick={() => onSelect(null)} type="button"><Plus size={16} />Add another horse</button> : null}<Continue disabled={horses.length === 0} onClick={onContinue}>Continue to owners</Continue></section>;
+  return <section><Intro step="Step one" title="Add horses, information, and care instructions.">Only administrators can change this information. Special requirement changes automatically alert administrators and Rebel Wranglers.</Intro><div className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]"><Card title="Your horses" description={`${horses.length} active ${horses.length === 1 ? "horse" : "horses"}`}><div className="space-y-2">{horses.length === 0 ? <Empty>No horses added yet.</Empty> : horses.map((horse) => <button className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${selectedHorse?.id === horse.id ? "border-[#385943] bg-[#e4ece4]" : "border-[#dedfd8] bg-white"}`} key={horse.id} onClick={() => onSelect(horse.id)} type="button">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-12 w-12 shrink-0 rounded-full bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#1d3528] font-serif text-white">{horse.name[0]}</span>}<span className="min-w-0 flex-1"><strong className="block truncate">{horse.name}</strong><small className="block truncate text-[#68736b]">{horse.fieldName} · {horse.herdName}</small></span><ArrowRight size={17} /></button>)}</div><ArchivedHorseList horses={archivedHorses} saving={saving} onDelete={onDelete} onRestore={onRestore} /></Card>{selectedHorse ? <div className="space-y-5"><HorseInformationCard horse={selectedHorse} ownerContacts={ownerContacts} saving={saving} onArchive={onArchive} onUpdate={onUpdateInformation} /><EmergencyContactsCard contacts={selectedHorse.emergencyContacts} horseName={selectedHorse.name} saving={saving} onAdd={onAddEmergencyContact} onDelete={onDeleteEmergencyContact} /><HealthRecordsCard horse={selectedHorse} saving={saving} onAdd={onAddHealthRecord} onDelete={onDeleteHealthRecord} /><Card title={`${selectedHorse.name}’s Care Card`} description="Feed, supplements, and daily instructions"><form className="space-y-4" key={selectedHorse.careProfile?.updated_at ?? selectedHorse.id} onSubmit={(event) => void onUpdateCare(event)}><CareFields care={selectedHorse.careProfile} /><button className={primary} disabled={saving} type="submit"><Check size={17} />Save care card</button></form></Card><MedicationCard horse={selectedHorse} saving={saving} onAdd={onAddMedication} onComplete={onCompleteMedication} /></div> : <AddHorseCard saving={saving} onAdd={onAdd} />}</div>{selectedHorse ? <button className={`${secondary} mt-5`} onClick={() => onSelect(null)} type="button"><Plus size={16} />Add another horse</button> : null}<Continue disabled={horses.length === 0} onClick={onContinue}>Continue to owners</Continue></section>;
 }
 
 function ArchivedHorseList({ horses, saving, onDelete, onRestore }: { readonly horses: readonly HorseView[]; readonly saving: boolean; readonly onDelete: (horse: Horse) => Promise<void>; readonly onRestore: (horse: Horse) => Promise<void> }): React.JSX.Element | null {
@@ -666,7 +698,7 @@ function AddHorseCard({ saving, onAdd }: { readonly saving: boolean; readonly on
 
 function HorseInformationFields({ horse }: { readonly horse?: Horse }): React.JSX.Element {
   const latestBirthYear = new Date().getFullYear() + 1;
-  return <><div className="grid gap-4 sm:grid-cols-2"><Label name="Breed or type"><input className={input} defaultValue={horse?.horse_type ?? ""} maxLength={160} name="horseType" placeholder="Example: Quarter Horse" /></Label><Label name="Year born"><input className={input} defaultValue={horse?.birth_year ?? ""} max={latestBirthYear} min={1900} name="birthYear" placeholder="Example: 2015" type="number" /></Label></div><div className="grid gap-4 sm:grid-cols-3"><Label name="Veterinarian"><input className={input} defaultValue={horse?.veterinarian_name ?? ""} maxLength={160} name="veterinarianName" /></Label><Label name="Veterinarian phone"><input autoComplete="tel" className={input} defaultValue={horse?.veterinarian_phone ?? ""} maxLength={50} name="veterinarianPhone" type="tel" /></Label><Label name="Veterinarian emergency phone"><input autoComplete="tel" className={input} defaultValue={horse?.veterinarian_emergency_phone ?? ""} maxLength={50} name="veterinarianEmergencyPhone" type="tel" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="Farrier"><input className={input} defaultValue={horse?.farrier_name ?? ""} maxLength={160} name="farrierName" /></Label><Label name="Farrier phone"><input autoComplete="tel" className={input} defaultValue={horse?.farrier_phone ?? ""} maxLength={50} name="farrierPhone" type="tel" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="Emergency contact name"><input className={input} defaultValue={horse?.emergency_contact_name ?? ""} maxLength={160} name="emergencyContactName" /></Label><Label name="Emergency contact phone"><input autoComplete="tel" className={input} defaultValue={horse?.emergency_contact_phone ?? ""} maxLength={50} name="emergencyContactPhone" type="tel" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="Deworming schedule"><textarea className={area} defaultValue={horse?.deworming_schedule ?? ""} maxLength={4000} name="dewormingSchedule" placeholder="Products, dates, or rotation instructions" /></Label><Label name="Pre-Existing Conditions"><textarea className={area} defaultValue={horse?.vaccine_schedule ?? ""} maxLength={4000} name="vaccineSchedule" placeholder="Conditions present before boarding" /></Label></div></>;
+  return <><div className="grid gap-4 sm:grid-cols-2"><Label name="Breed or type"><input className={input} defaultValue={horse?.horse_type ?? ""} maxLength={160} name="horseType" placeholder="Example: Quarter Horse" /></Label><Label name="Year born"><input className={input} defaultValue={horse?.birth_year ?? ""} max={latestBirthYear} min={1900} name="birthYear" placeholder="Example: 2015" type="number" /></Label></div><div className="grid gap-4 sm:grid-cols-3"><Label name="Veterinarian"><input className={input} defaultValue={horse?.veterinarian_name ?? ""} maxLength={160} name="veterinarianName" /></Label><Label name="Veterinarian phone"><input autoComplete="tel" className={input} defaultValue={horse?.veterinarian_phone ?? ""} maxLength={50} name="veterinarianPhone" type="tel" /></Label><Label name="Veterinarian emergency phone"><input autoComplete="tel" className={input} defaultValue={horse?.veterinarian_emergency_phone ?? ""} maxLength={50} name="veterinarianEmergencyPhone" type="tel" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="Farrier"><input className={input} defaultValue={horse?.farrier_name ?? ""} maxLength={160} name="farrierName" /></Label><Label name="Farrier phone"><input autoComplete="tel" className={input} defaultValue={horse?.farrier_phone ?? ""} maxLength={50} name="farrierPhone" type="tel" /></Label></div><div className="grid gap-4 sm:grid-cols-2"><Label name="Deworming schedule"><textarea className={area} defaultValue={horse?.deworming_schedule ?? ""} maxLength={4000} name="dewormingSchedule" placeholder="Products, dates, or rotation instructions" /></Label><Label name="Pre-Existing Conditions"><textarea className={area} defaultValue={horse?.vaccine_schedule ?? ""} maxLength={4000} name="vaccineSchedule" placeholder="Conditions present before boarding" /></Label></div></>;
 }
 
 function HorseInformationCard({ horse, ownerContacts, saving, onArchive, onUpdate }: { readonly horse: HorseView; readonly ownerContacts: readonly { readonly owner: Profile; readonly relationship: Relationship }[]; readonly saving: boolean; readonly onArchive: (horse: Horse) => Promise<void>; readonly onUpdate: (event: FormEvent<HTMLFormElement>, thumbnail: PreparedThumbnailUpload | null) => Promise<boolean> }): React.JSX.Element {
@@ -701,6 +733,13 @@ function HorseInformationCard({ horse, ownerContacts, saving, onArchive, onUpdat
   }
 
   return <Card title={`${horse.name}’s information card`} description="Identity, health contacts, schedules, and owner contacts"><form className="space-y-4" key={horse.updated_at} onSubmit={(event) => void submitInformation(event)}><div className="flex flex-col gap-4 rounded-2xl bg-[#f7f3e9] p-4 sm:flex-row sm:items-center">{horse.thumbnailUrl ? <span aria-label={`${horse.name} thumbnail`} className="h-24 w-24 shrink-0 rounded-2xl bg-cover bg-center" role="img" style={{ backgroundImage: `url(${horse.thumbnailUrl})` }} /> : <span className="grid h-24 w-24 shrink-0 place-items-center rounded-2xl bg-[#1d3528] font-serif text-3xl text-white">{horse.name[0]}</span>}<div className="flex-1"><Label name="Take or choose a thumbnail photo"><input accept="image/jpeg,image/png,image/webp,image/heic,image/heif" className="block w-full text-sm file:mr-3 file:rounded-full file:border-0 file:bg-[#e4ece4] file:px-4 file:py-2 file:font-bold file:text-[#385943]" name="thumbnail" onChange={(event) => void selectThumbnail(event)} type="file" /></Label>{preparingThumbnail ? <p className="mb-0 mt-2 text-sm text-[#68736b]" role="status">Preparing photo…</p> : null}{thumbnailStatus ? <p className={`mb-0 mt-2 text-sm ${preparedThumbnail ? "text-[#385943]" : "text-[#a65333]"}`} role="status">{thumbnailStatus}</p> : null}</div></div><HorseInformationFields horse={horse} /><button className={primary} disabled={saving || preparingThumbnail} type="submit"><Check size={17} />Save information card</button></form><div className="mt-5 flex justify-end"><button className={danger} disabled={saving} onClick={() => { if (window.confirm(`Remove ${horse.name} from the active stable? Their care card, medications, conversations, and history will be preserved.`)) void onArchive(horse); }} type="button"><Archive size={16} />Remove horse</button></div><div className="mt-6 border-t border-[#dedfd8] pt-5"><h4 className="mb-3 font-serif text-xl">Owners and family</h4>{ownerContacts.length === 0 ? <Empty>Connect an owner in People & access to show their contact information here.</Empty> : <div className="grid gap-3 sm:grid-cols-2">{ownerContacts.map(({ owner, relationship }) => <address className="rounded-xl border border-[#dedfd8] bg-white p-4 text-sm not-italic" key={owner.id}><strong className="block">{owner.full_name}</strong><span className="mb-2 block text-xs text-[#68736b]">{relationship === "primary_owner" ? "Primary owner" : "Authorized family"}</span><a className="block font-bold text-[#385943] underline" href={`mailto:${owner.email}`}>{owner.email}</a>{owner.phone ? <a className="mt-1 block font-bold text-[#385943] underline" href={`tel:${owner.phone}`}>{formatPhoneNumber(owner.phone)}</a> : <span className="mt-1 block text-[#68736b]">Phone not added</span>}</address>)}</div>}</div></Card>;
+}
+
+function EmergencyContactsCard({ contacts, horseName, saving, onAdd, onDelete }: { readonly contacts: readonly EmergencyContact[]; readonly horseName: string; readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void>; readonly onDelete: (contact: EmergencyContact) => Promise<void> }): React.JSX.Element {
+  return <Card title={`${horseName}’s Emergency Contacts`} description="Add every person who should be contacted in an emergency.">
+    {contacts.length > 0 ? <div className="mb-4 space-y-2">{contacts.map((contact) => <div className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f3e9] p-3 text-sm" key={contact.id}><span><strong className="block">{contact.name}</strong><span className="text-[#68736b]">{contact.phone ? formatPhoneNumber(contact.phone) : "Phone not entered"}</span></span><button className={danger} disabled={saving} onClick={() => void onDelete(contact)} type="button"><Trash2 size={15} />Remove</button></div>)}</div> : <p className="mb-4 rounded-xl bg-[#f7f3e9] p-3 text-sm text-[#68736b]">No emergency contacts added.</p>}
+    <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => void onAdd(event)}><Label name="Contact Name"><input className={input} maxLength={160} name="emergencyContactName" required /></Label><Label name="Phone Number"><input autoComplete="tel" className={input} maxLength={50} name="emergencyContactPhone" required type="tel" /></Label><button className={`${primary} sm:col-span-2`} disabled={saving} type="submit"><Plus size={17} />Add Emergency Contact</button></form>
+  </Card>;
 }
 
 function HealthRecordsCard({ horse, saving, onAdd, onDelete }: { readonly horse: HorseView; readonly saving: boolean; readonly onAdd: (event: FormEvent<HTMLFormElement>, options: readonly HealthRecordOption[]) => Promise<void>; readonly onDelete: (record: HealthRecord) => Promise<void> }): React.JSX.Element {

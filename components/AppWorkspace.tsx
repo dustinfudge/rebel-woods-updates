@@ -26,6 +26,7 @@ type Herd = Tables<"herds">;
 type CareProfile = Tables<"care_profiles">;
 type Medication = Tables<"horse_medications">;
 type HealthRecord = Tables<"horse_health_records">;
+type EmergencyContact = Tables<"horse_emergency_contacts">;
 type HorseAccess = Tables<"horse_access">;
 type HorseConversation = Tables<"horse_conversations">;
 type Notification = Tables<"notifications">;
@@ -39,6 +40,7 @@ interface WorkspaceData {
   readonly careProfiles: readonly CareProfile[];
   readonly medications: readonly Medication[];
   readonly healthRecords: readonly HealthRecord[];
+  readonly emergencyContacts: readonly EmergencyContact[];
   readonly horseAccess: readonly HorseAccess[];
   readonly conversations: readonly HorseConversation[];
   readonly profiles: readonly Profile[];
@@ -55,6 +57,7 @@ interface HorseDashboardItem {
   readonly careProfile: CareProfile | null;
   readonly activeMedications: readonly Medication[];
   readonly healthRecords: readonly HealthRecord[];
+  readonly emergencyContacts: readonly EmergencyContact[];
   readonly conversation: HorseConversation;
   readonly daysSinceStaffCommunication: number;
   readonly unreadReplyCount: number;
@@ -67,7 +70,7 @@ interface WorkspaceNotice {
   readonly message: string;
 }
 
-const emptyWorkspaceData: WorkspaceData = { horses: [], fields: [], herds: [], careProfiles: [], medications: [], healthRecords: [], horseAccess: [], conversations: [], profiles: [], notifications: [], staffAlerts: [], staffAlertAcknowledgements: [] };
+const emptyWorkspaceData: WorkspaceData = { horses: [], fields: [], herds: [], careProfiles: [], medications: [], healthRecords: [], emergencyContacts: [], horseAccess: [], conversations: [], profiles: [], notifications: [], staffAlerts: [], staffAlertAcknowledgements: [] };
 const primaryButton = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#1d3528] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButton = "inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#cfd4ce] bg-white px-4 py-2 text-sm font-bold text-[#385943] disabled:opacity-50";
 
@@ -141,13 +144,14 @@ export function AppWorkspace(): React.JSX.Element {
 
   const loadWorkspace = useCallback(async (currentProfile: Profile, refreshThumbnails = false): Promise<WorkspaceData> => {
     const client = getSupabaseBrowserClient();
-    const [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, healthRecordsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult] = await Promise.all([
+    const [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, healthRecordsResult, emergencyContactsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult] = await Promise.all([
       client.from("horses").select("*").eq("is_active", true).order("name"),
       client.from("fields").select("*").eq("is_active", true).order("name"),
       client.from("herds").select("*").eq("is_active", true).order("name"),
       client.from("care_profiles").select("*").order("updated_at", { ascending: false }),
       client.from("horse_medications").select("*").order("starts_on", { ascending: false }),
       client.from("horse_health_records").select("*").order("recorded_on", { ascending: false }),
+      client.from("horse_emergency_contacts").select("*").order("created_at"),
       client.from("horse_access").select("*"),
       client.from("horse_conversations").select("*").order("last_staff_communication_at", { ascending: true, nullsFirst: true }),
       client.from("profiles").select("*").eq("is_active", true).order("full_name"),
@@ -155,7 +159,7 @@ export function AppWorkspace(): React.JSX.Element {
       client.from("staff_alerts").select("*").order("created_at", { ascending: false }),
       client.from("staff_alert_acknowledgements").select("*").order("acknowledged_at", { ascending: false }),
     ]);
-    const firstError = [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, healthRecordsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult].map((result) => result.error).find((error) => error !== null);
+    const firstError = [horsesResult, fieldsResult, herdsResult, careResult, medicationsResult, healthRecordsResult, emergencyContactsResult, accessResult, conversationsResult, profilesResult, notificationsResult, staffAlertsResult, alertAcknowledgementsResult].map((result) => result.error).find((error) => error !== null);
     if (firstError) throw firstError;
     const horses = horsesResult.data ?? [];
     const loadedWorkspaceData: WorkspaceData = {
@@ -165,6 +169,7 @@ export function AppWorkspace(): React.JSX.Element {
       careProfiles: careResult.data ?? [],
       medications: medicationsResult.data ?? [],
       healthRecords: healthRecordsResult.data ?? [],
+      emergencyContacts: emergencyContactsResult.data ?? [],
       horseAccess: accessResult.data ?? [],
       conversations: conversationsResult.data ?? [],
       profiles: profilesResult.data ?? [],
@@ -285,6 +290,7 @@ export function AppWorkspace(): React.JSX.Element {
       .on("postgres_changes", { event: "*", schema: "public", table: "care_profiles" }, scheduleWorkspaceRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "horse_medications" }, scheduleWorkspaceRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "horse_health_records" }, scheduleWorkspaceRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "horse_emergency_contacts" }, scheduleWorkspaceRefresh)
       .subscribe();
     return (): void => {
       if (refreshTimer) clearTimeout(refreshTimer);
@@ -311,6 +317,7 @@ export function AppWorkspace(): React.JSX.Element {
         careProfile: careByHorse.get(horse.id) ?? null,
         activeMedications: workspaceData.medications.filter((medication) => medication.horse_id === horse.id && medication.status === "active"),
         healthRecords: workspaceData.healthRecords.filter((record) => record.horse_id === horse.id),
+        emergencyContacts: workspaceData.emergencyContacts.filter((contact) => contact.horse_id === horse.id),
         conversation,
         daysSinceStaffCommunication,
         unreadReplyCount: notificationCounts.replyCount,
@@ -630,7 +637,7 @@ function CareSummary({ canContactOwners, horseItem }: { readonly canContactOwner
   const careProfile = horseItem.careProfile;
   return <section className="rounded-3xl border border-[#dedfd8] bg-[#fffdf8] p-5"><div className="mb-4 flex items-center justify-between"><h2 className="font-serif text-2xl">Care Card</h2>{careProfile?.special_requirements.trim() ? <span className="grid h-11 w-11 place-items-center rounded-full border-2 border-[#a65333] bg-[#f3ded3] text-[#a65333]"><ShieldAlert aria-label="Special care requirements" size={25} /></span> : null}</div><div className="space-y-4 text-sm"><CareValue label="AM FEED" value={careProfile?.am_feed} /><CareValue label="PM FEED" value={careProfile?.pm_feed} /><CareValue label="AM SUPPLEMENTS" value={careProfile?.supplements_am} /><CareValue label="PM SUPPLEMENTS" value={careProfile?.supplements_pm} />{careProfile?.special_requirements.trim() ? <div className="rounded-2xl border-2 border-[#a65333] bg-[#f3ded3] p-4 text-[#73391f]"><strong className="mb-1 flex items-center gap-2 text-sm font-extrabold uppercase tracking-[0.08em]"><ShieldAlert aria-hidden="true" size={19} />Special Requirements</strong><p className="mb-0 whitespace-pre-wrap font-semibold leading-6">{careProfile.special_requirements}</p></div> : null}</div>
     {horseItem.activeMedications.length > 0 ? <div className="mt-5 border-t border-[#dedfd8] pt-5"><h3 className="mb-3 flex items-center gap-2 font-bold"><Pill size={17} />Current Medications</h3><div className="space-y-3">{horseItem.activeMedications.map((medication) => <article className="rounded-2xl bg-[#f6e8c9] p-4 text-sm" key={medication.id}><strong className="block">{medication.name} · {medication.dosage}</strong><p className="mb-0 mt-1 whitespace-pre-wrap leading-5">{medication.instructions}</p>{medication.ends_on ? <small className="mt-2 block">Through {new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(`${medication.ends_on}T12:00:00`))}</small> : null}</article>)}</div></div> : null}
-    <div className="mt-5 space-y-4 border-t border-[#dedfd8] pt-5"><h3 className="mb-3 font-bold">Contacts & Schedules</h3><OwnerContacts canContact={canContactOwners} owners={horseItem.owners} /><ProfessionalContact allowText name={horseItem.horse.emergency_contact_name} phone={horseItem.horse.emergency_contact_phone} title="Emergency contact" /><ProfessionalContact emergencyPhone={horseItem.horse.veterinarian_emergency_phone} name={horseItem.horse.veterinarian_name} phone={horseItem.horse.veterinarian_phone} title="Veterinarian" /><ProfessionalContact allowText name={horseItem.horse.farrier_name} phone={horseItem.horse.farrier_phone} title="Farrier" /><CareValue label="Deworming" value={horseItem.horse.deworming_schedule} />{horseItem.horse.vaccine_schedule.trim() ? <CareValue label="Pre-Existing Conditions" value={horseItem.horse.vaccine_schedule} /> : null}<HealthRecordSummary records={horseItem.healthRecords} /></div>
+    <div className="mt-5 space-y-4 border-t border-[#dedfd8] pt-5"><h3 className="mb-3 font-bold">Contacts & Schedules</h3><OwnerContacts canContact={canContactOwners} owners={horseItem.owners} /><EmergencyContactList contacts={horseItem.emergencyContacts} /><ProfessionalContact emergencyPhone={horseItem.horse.veterinarian_emergency_phone} name={horseItem.horse.veterinarian_name} phone={horseItem.horse.veterinarian_phone} title="Veterinarian" /><ProfessionalContact allowText name={horseItem.horse.farrier_name} phone={horseItem.horse.farrier_phone} title="Farrier" /><CareValue label="Deworming" value={horseItem.horse.deworming_schedule} />{horseItem.horse.vaccine_schedule.trim() ? <CareValue label="Pre-Existing Conditions" value={horseItem.horse.vaccine_schedule} /> : null}<HealthRecordSummary records={horseItem.healthRecords} /></div>
   </section>;
 }
 
@@ -638,7 +645,11 @@ function OwnerContacts({ canContact, owners }: { readonly canContact: boolean; r
   return <div><strong className="mb-2 block text-sm font-extrabold uppercase tracking-[0.08em] text-[#1d3528]">Owner / family</strong>{owners.length === 0 ? <p className="mb-0 text-[#293b31]">Not entered</p> : <div className="space-y-2">{owners.map((owner) => <div className="rounded-xl bg-[#f7f3e9] p-3" key={owner.id}><strong className="block">{owner.full_name}</strong>{owner.phone ? <><span className="mt-1 block text-sm text-[#293b31]">{formatPhoneNumber(owner.phone)}</span>{canContact ? <div className="mt-3 grid grid-cols-2 gap-2"><a className={secondaryButton} href={`tel:${owner.phone}`} aria-label={`Call ${owner.full_name}`}>Call</a><a className={secondaryButton} href={`sms:${owner.phone}`} aria-label={`Text ${owner.full_name}`}>Text</a></div> : null}</> : <span className="mt-1 block text-sm text-[#68736b]">Phone not entered</span>}</div>)}</div>}</div>;
 }
 
-function ProfessionalContact({ allowText = false, emergencyPhone = "", name, phone, title }: { readonly allowText?: boolean; readonly emergencyPhone?: string; readonly name: string; readonly phone: string; readonly title: "Emergency contact" | "Veterinarian" | "Farrier" }): React.JSX.Element {
+function EmergencyContactList({ contacts }: { readonly contacts: readonly EmergencyContact[] }): React.JSX.Element {
+  return <div><strong className="mb-2 block text-sm font-extrabold uppercase tracking-[0.08em] text-[#1d3528]">Emergency Contacts</strong>{contacts.length === 0 ? <p className="mb-0 text-[#293b31]">Not entered</p> : <div className="space-y-2">{contacts.map((contact) => <div className="rounded-xl bg-[#f7f3e9] p-3" key={contact.id}><strong className="block">{contact.name}</strong>{contact.phone.trim() ? <><span className="mt-1 block text-sm text-[#293b31]">{formatPhoneNumber(contact.phone)}</span><div className="mt-3 grid grid-cols-2 gap-2"><a aria-label={`Call ${contact.name}`} className={secondaryButton} href={`tel:${contact.phone}`}>Call</a><a aria-label={`Text ${contact.name}`} className={secondaryButton} href={`sms:${contact.phone}`}>Text</a></div></> : <span className="mt-1 block text-sm text-[#68736b]">Phone not entered</span>}</div>)}</div>}</div>;
+}
+
+function ProfessionalContact({ allowText = false, emergencyPhone = "", name, phone, title }: { readonly allowText?: boolean; readonly emergencyPhone?: string; readonly name: string; readonly phone: string; readonly title: "Veterinarian" | "Farrier" }): React.JSX.Element {
   const hasContactInformation = name.trim() || phone.trim() || emergencyPhone.trim();
   const contactLabel = name.trim() || title.toLocaleLowerCase();
   return <div><strong className="mb-2 block text-sm font-extrabold uppercase tracking-[0.08em] text-[#1d3528]">{title}</strong>{hasContactInformation ? <div className="rounded-xl bg-[#f7f3e9] p-3"><strong className="block">{name.trim() || "Name not entered"}</strong>{phone.trim() ? <><span className="mt-1 block text-sm text-[#293b31]">{formatPhoneNumber(phone)}</span><div className={`mt-3 grid gap-2 ${allowText ? "grid-cols-2" : "grid-cols-1"}`}><a className={secondaryButton} href={`tel:${phone}`} aria-label={`Call ${contactLabel}`}>Call</a>{allowText ? <a className={secondaryButton} href={`sms:${phone}`} aria-label={`Text ${contactLabel}`}>Text</a> : null}</div></> : <span className="mt-1 block text-sm text-[#68736b]">Phone not entered</span>}{emergencyPhone.trim() ? <div className="mt-3 border-t border-[#dedfd8] pt-3"><strong className="block text-xs uppercase tracking-[0.08em] text-[#8b3e22]">Emergency number</strong><span className="mt-1 block text-sm text-[#293b31]">{formatPhoneNumber(emergencyPhone)}</span><a className="mt-3 inline-flex min-h-10 w-full items-center justify-center rounded-full bg-[#a65333] px-4 py-2 text-sm font-bold text-white" href={`tel:${emergencyPhone}`} aria-label={`Call ${contactLabel} emergency number`}>Call emergency</a></div> : null}</div> : <p className="mb-0 text-[#293b31]">Not entered</p>}</div>;

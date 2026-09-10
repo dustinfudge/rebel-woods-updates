@@ -1,2 +1,8 @@
 [functions.send-push-notification]
 verify_jwt = false
+
+[functions.submit-guest-waiver]
+verify_jwt = false
+
+[functions.manage-guest-waiver]
+verify_jwt = false

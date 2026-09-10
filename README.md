@@ -79,3 +79,15 @@ Configure these Edge Function secrets:
 Deploy `send-push-notification` without JWT verification. Create a Database Webhook for `INSERT` events on `public.notifications`, target the deployed Edge Function, and add the `x-push-webhook-secret` header. Store the same public VAPID key in the GitHub Actions secret `NEXT_PUBLIC_VAPID_PUBLIC_KEY`.
 
 Conversation retention is configured per organization. The weekly cleanup function removes expired conversation messages and their storage objects while preserving care information, medication history, access, and last-staff-contact dates.
+
+## Guest liability waivers
+
+The permanent public form is `/guest-waiver/`. Guests do not need an account. Signed PDFs and submission details are private and available only to administrators in **Setup → Guest waivers**.
+
+1. Run `supabase/migrations/202609090002_guest_liability_waivers.sql`.
+2. Deploy `submit-guest-waiver` and `manage-guest-waiver` without JWT verification.
+3. Add the `RESEND_API_KEY` Edge Function secret. Optionally set `WAIVER_FROM_EMAIL` to `Rebel Woods <updates@rebelwoods.com>`.
+4. Deploy the GitHub Pages build.
+5. Open **Setup → Guest waivers** and activate the exact three-page waiver PDF.
+
+The printable barn sign is `public/guest-waiver-qr-sign.pdf`. Its QR address remains unchanged when a later waiver version is activated.

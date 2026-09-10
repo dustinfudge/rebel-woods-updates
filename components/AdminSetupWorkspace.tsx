@@ -1,10 +1,11 @@
 "use client";
 
-import { AlertCircle, Archive, ArrowRight, CalendarClock, Check, LoaderCircle, LogOut, MapPin, Plus, RotateCcw, ShieldCheck, Stethoscope, Trash2, UserMinus, UsersRound } from "lucide-react";
+import { AlertCircle, Archive, ArrowRight, CalendarClock, Check, FileSignature, LoaderCircle, LogOut, MapPin, Plus, RotateCcw, ShieldCheck, Stethoscope, Trash2, UserMinus, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { getPagesBasePath } from "@/lib/environment";
+import { GuestWaiverAdmin } from "@/components/GuestWaiverAdmin";
 import { getHerdRosterLabel } from "@/lib/herds";
 import {
   formatHealthRecordDate,
@@ -29,9 +30,12 @@ type HorseAccess = Tables<"horse_access">;
 type EmergencyContact = Tables<"horse_emergency_contacts">;
 type Medication = Tables<"horse_medications">;
 type HealthRecord = Tables<"horse_health_records">;
+type GuestWaiverVersion = Tables<"guest_waiver_versions">;
+type GuestWaiverSubmission = Tables<"guest_waiver_submissions">;
+type GuestWaiverMinor = Tables<"guest_waiver_minors">;
 type AppRole = Database["public"]["Enums"]["app_role"];
 type Relationship = Database["public"]["Enums"]["horse_relationship"];
-type Section = "locations" | "horses" | "people";
+type Section = "locations" | "horses" | "people" | "waivers";
 type HorseInformationUpdate = Pick<Database["public"]["Tables"]["horses"]["Update"], "horse_type" | "birth_year" | "veterinarian_name" | "veterinarian_phone" | "veterinarian_emergency_phone" | "farrier_name" | "farrier_phone" | "deworming_schedule" | "vaccine_schedule">;
 
 interface SetupData {
@@ -45,6 +49,9 @@ interface SetupData {
   emergencyContacts: readonly EmergencyContact[];
   medications: readonly Medication[];
   healthRecords: readonly HealthRecord[];
+  waiverVersions: readonly GuestWaiverVersion[];
+  waiverSubmissions: readonly GuestWaiverSubmission[];
+  waiverMinors: readonly GuestWaiverMinor[];
 }
 
 interface HorseView extends Horse {
@@ -68,7 +75,7 @@ interface PreparedThumbnailUpload {
   extension: "heic" | "jpg" | "png" | "webp";
 }
 
-const emptyData: SetupData = { organization: null, fields: [], herds: [], horses: [], care: [], profiles: [], access: [], emergencyContacts: [], medications: [], healthRecords: [] };
+const emptyData: SetupData = { organization: null, fields: [], herds: [], horses: [], care: [], profiles: [], access: [], emergencyContacts: [], medications: [], healthRecords: [], waiverVersions: [], waiverSubmissions: [], waiverMinors: [] };
 const input = "min-h-12 w-full rounded-xl border border-[#cfd4ce] bg-white px-4 text-base outline-none focus:border-[#385943] focus:ring-2 focus:ring-[#385943]/10";
 const area = `${input} min-h-24 resize-y py-3 leading-6`;
 const primary = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#1d3528] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50";
@@ -200,6 +207,9 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       client.from("horse_medications").select("*").order("starts_on", { ascending: false }),
       client.from("horse_health_records").select("*").order("recorded_on", { ascending: false }),
       client.from("horse_emergency_contacts").select("*").order("created_at"),
+      client.from("guest_waiver_versions").select("*").order("created_at", { ascending: false }),
+      client.from("guest_waiver_submissions").select("*").order("submitted_at", { ascending: false }),
+      client.from("guest_waiver_minors").select("*").order("sort_order"),
       client.from("organizations").select("*").eq("id", administrator.organization_id).single(),
     ]);
     const firstError = results.map((result) => result.error).find((error) => error !== null);
@@ -216,7 +226,7 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       setThumbnailUrls(signedThumbnailUrls);
     }
     setData({
-      organization: results[9].data,
+      organization: results[12].data,
       fields: results[0].data ?? [],
       herds: results[1].data ?? [],
       horses: loadedHorses,
@@ -224,6 +234,9 @@ export function AdminSetupWorkspace(): React.JSX.Element {
       medications: results[6].data ?? [],
       healthRecords: results[7].data ?? [],
       emergencyContacts: results[8].data ?? [],
+      waiverVersions: results[9].data ?? [],
+      waiverSubmissions: results[10].data ?? [],
+      waiverMinors: results[11].data ?? [],
     });
   }, []);
 
@@ -280,7 +293,9 @@ export function AdminSetupWorkspace(): React.JSX.Element {
   const owners = data.profiles.filter((person) => person.role === "owner" && person.is_active);
   const hasInvitedPerson = data.profiles.some((person) => person.id !== profile?.id && person.is_active);
   const selectedHorse = horseViews.find((horse) => horse.id === selectedHorseId) ?? null;
-  const progress = [data.fields.length > 0 && data.herds.length > 0, horses.length > 0, hasInvitedPerson].filter(Boolean).length;
+  const hasActiveWaiver = data.waiverVersions.some((version) => version.is_active);
+  const newWaiverCount = data.waiverSubmissions.filter((submission) => !submission.reviewed_at).length;
+  const progress = [data.fields.length > 0 && data.herds.length > 0, horses.length > 0, hasInvitedPerson, hasActiveWaiver].filter(Boolean).length;
 
   async function refresh(successMessage: string, refreshThumbnails = false): Promise<void> {
     if (!profile) return;
@@ -599,16 +614,18 @@ export function AdminSetupWorkspace(): React.JSX.Element {
     <div className="min-h-screen bg-[#f7f3e9] pb-20 text-[#14261d]">
       <header className="border-b border-[#dedfd8] bg-[#fffdf8]/95 px-5 py-4"><div className="mx-auto flex max-w-6xl items-center justify-between"><Brand /><div className="flex items-center gap-3"><a className={secondary} href={`${getPagesBasePath()}/`}>Stable home</a><span className="hidden text-right sm:block"><strong className="block text-sm">{profile.full_name}</strong><small className="text-[#68736b]">Administrator</small></span><button className="grid h-10 w-10 place-items-center rounded-full border border-[#dedfd8] bg-white" onClick={() => void getSupabaseBrowserClient().auth.signOut()} type="button" aria-label="Sign out"><LogOut size={17} /></button></div></div></header>
       <div className="mx-auto max-w-6xl px-5 py-10">
-        <section className="mb-8 grid gap-5 rounded-[2rem] bg-[#1d3528] p-7 text-white shadow-xl md:grid-cols-[1fr_auto] md:items-end md:p-9"><div><p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]">Live stable setup</p><h1 className="mb-3 max-w-2xl font-serif text-4xl leading-tight md:text-5xl">Let’s add the real Rebel Woods herd.</h1><p className="mb-0 max-w-2xl leading-7 text-[#cdd9cf]">Start with each horse and its care card, connect its owners, then organize fields and herds.</p></div><div className="rounded-2xl bg-white/10 px-5 py-4"><strong className="block text-3xl">{progress} / 3</strong><small className="text-[#cdd9cf]">setup areas started</small></div></section>
+        <section className="mb-8 grid gap-5 rounded-[2rem] bg-[#1d3528] p-7 text-white shadow-xl md:grid-cols-[1fr_auto] md:items-end md:p-9"><div><p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#d9a27b]">Live stable setup</p><h1 className="mb-3 max-w-2xl font-serif text-4xl leading-tight md:text-5xl">Let’s add the real Rebel Woods herd.</h1><p className="mb-0 max-w-2xl leading-7 text-[#cdd9cf]">Manage horses and care, people, fields and herds, and signed guest waivers.</p></div><div className="rounded-2xl bg-white/10 px-5 py-4"><strong className="block text-3xl">{progress} / 4</strong><small className="text-[#cdd9cf]">setup areas started</small></div></section>
         {notice ? <div className={`mb-6 flex gap-3 rounded-2xl border p-4 text-sm ${notice.tone === "success" ? "border-[#b8c9bb] bg-[#e4ece4] text-[#1d3528]" : "border-[#e1b8a6] bg-[#f3ded3] text-[#73391f]"}`} role="status">{notice.tone === "success" ? <Check size={18} /> : <AlertCircle size={18} />}<span>{notice.message}</span></div> : null}
-        <nav className="mb-7 grid gap-2 rounded-2xl border border-[#dedfd8] bg-[#fffdf8] p-2 sm:grid-cols-3" aria-label="Setup sections">
+        <nav className="mb-7 grid gap-2 rounded-2xl border border-[#dedfd8] bg-[#fffdf8] p-2 sm:grid-cols-2 lg:grid-cols-4" aria-label="Setup sections">
           <Tab active={section === "horses"} complete={horses.length > 0} icon={<Stethoscope size={18} />} label="1. Horses & care" onClick={() => setSection("horses")} />
           <Tab active={section === "people"} complete={hasInvitedPerson} icon={<UsersRound size={18} />} label="2. Owners & access" onClick={() => setSection("people")} />
           <Tab active={section === "locations"} complete={data.fields.length > 0 && data.herds.length > 0} icon={<MapPin size={18} />} label="3. Fields & herds" onClick={() => setSection("locations")} />
+          <Tab active={section === "waivers"} badgeCount={newWaiverCount} complete={hasActiveWaiver} icon={<FileSignature size={18} />} label="4. Guest waivers" onClick={() => setSection("waivers")} />
         </nav>
         {section === "locations" ? <Locations fields={data.fields} herds={data.herds} retentionDays={data.organization?.update_retention_days ?? 180} saving={saving} onAdd={addLocation} onUpdateRetention={updateRetention} /> : null}
         {section === "horses" ? <Horses access={data.access} archivedHorses={archivedHorses} horses={horses} profiles={data.profiles} saving={saving} selectedHorse={selectedHorse} onAdd={addHorse} onAddEmergencyContact={addEmergencyContact} onAddHealthRecord={addHealthRecord} onAddMedication={addMedication} onArchive={archiveHorse} onCompleteMedication={completeMedication} onContinue={() => setSection("people")} onDelete={permanentlyDeleteHorse} onDeleteEmergencyContact={deleteEmergencyContact} onDeleteHealthRecord={deleteHealthRecord} onRestore={restoreHorse} onSelect={setSelectedHorseId} onUpdateCare={updateCare} onUpdateInformation={updateHorseInformation} /> : null}
         {section === "people" ? <People access={data.access} currentProfileId={profile.id} horses={horses} owners={owners} profiles={data.profiles} saving={saving} onContinue={() => setSection("locations")} onDelete={permanentlyDeletePerson} onGrant={grantAccess} onInvite={invite} onRemoveAccess={removeHorseAccess} onSetActive={setPersonActive} onUpdatePhone={updatePersonPhone} /> : null}
+        {section === "waivers" ? <GuestWaiverAdmin administratorId={profile.id} organizationId={profile.organization_id} minors={data.waiverMinors} submissions={data.waiverSubmissions} versions={data.waiverVersions} onRefresh={refresh} /> : null}
       </div>
     </div>
   );
@@ -626,8 +643,8 @@ function AccessProblem({ details, onRetry, onSignOut }: { readonly details: stri
   return <div className="grid min-h-screen place-items-center bg-[#f7f3e9] px-5"><section className="max-w-lg rounded-[2rem] border border-[#dedfd8] bg-[#fffdf8] p-8 text-center shadow-xl"><AlertCircle className="mx-auto mb-5 text-[#a65333]" size={42} /><h1 className="mb-3 font-serif text-4xl">We couldn’t open the setup.</h1><p className="mb-4 leading-7 text-[#68736b]">Your account is still safe. The app could not finish loading your administrator profile.</p><p className="mb-6 rounded-xl bg-[#f3ded3] p-3 text-sm text-[#73391f]">{details}</p><div className="flex flex-wrap justify-center gap-3"><button className={primary} onClick={onRetry} type="button">Try again</button><button className={secondary} onClick={onSignOut} type="button">Sign out</button></div></section></div>;
 }
 
-function Tab({ active, complete, icon, label, onClick }: { readonly active: boolean; readonly complete: boolean; readonly icon: React.ReactNode; readonly label: string; readonly onClick: () => void }): React.JSX.Element {
-  return <button className={`flex min-h-12 items-center gap-3 rounded-xl px-4 text-left text-sm font-bold ${active ? "bg-[#1d3528] text-white" : "text-[#385943] hover:bg-[#e4ece4]"}`} onClick={onClick} type="button">{icon}<span className="flex-1">{label}</span>{complete ? <Check size={17} /> : null}</button>;
+function Tab({ active, badgeCount = 0, complete, icon, label, onClick }: { readonly active: boolean; readonly badgeCount?: number; readonly complete: boolean; readonly icon: React.ReactNode; readonly label: string; readonly onClick: () => void }): React.JSX.Element {
+  return <button className={`flex min-h-12 items-center gap-3 rounded-xl px-4 text-left text-sm font-bold ${active ? "bg-[#1d3528] text-white" : "text-[#385943] hover:bg-[#e4ece4]"}`} onClick={onClick} type="button">{icon}<span className="flex-1">{label}</span>{badgeCount > 0 ? <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[#1f5f8b] px-1.5 text-[10px] font-extrabold text-white">{badgeCount}</span> : complete ? <Check size={17} /> : null}</button>;
 }
 
 function Intro({ step, title, children }: { readonly step: string; readonly title: string; readonly children: React.ReactNode }): React.JSX.Element {

@@ -163,6 +163,72 @@ export type Database = {
         };
         Relationships: [];
       };
+      guest_waiver_versions: {
+        Row: {
+          id: string;
+          organization_id: string;
+          title: string;
+          version_label: string;
+          template_storage_path: string;
+          original_filename: string;
+          template_sha256: string;
+          is_active: boolean;
+          created_by: string;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      guest_waiver_submissions: {
+        Row: {
+          id: string;
+          organization_id: string;
+          waiver_version_id: string;
+          confirmation_number: string;
+          adult_name: string;
+          horse_name: string;
+          email: string | null;
+          typed_signature_name: string;
+          pdf_storage_path: string;
+          email_copy_requested: boolean;
+          email_sent_at: string | null;
+          submitted_at: string;
+          ip_hash: string;
+          user_agent: string;
+          reviewed_at: string | null;
+          reviewed_by: string | null;
+        };
+        Insert: never;
+        Update: {
+          reviewed_at?: string | null;
+          reviewed_by?: string | null;
+        };
+        Relationships: [];
+      };
+      guest_waiver_minors: {
+        Row: {
+          id: string;
+          submission_id: string;
+          full_name: string;
+          birth_date: string;
+          sort_order: number;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      guest_waiver_rate_limits: {
+        Row: {
+          rate_key: string;
+          window_started_at: string;
+          attempt_count: number;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       care_profiles: {
         Row: {
           horse_id: string;
@@ -577,6 +643,25 @@ export type Database = {
       create_herd_for_horse: { Args: { target_horse_id: string }; Returns: string };
       create_custom_staff_alert: { Args: { alert_message: string }; Returns: string };
       delete_archived_staff_alert: { Args: { target_alert_id: string }; Returns: undefined };
+      activate_guest_waiver_version: {
+        Args: {
+          waiver_title: string;
+          waiver_version_label: string;
+          waiver_template_storage_path: string;
+          waiver_original_filename: string;
+          waiver_template_sha256: string;
+        };
+        Returns: string;
+      };
+      get_active_guest_waiver: {
+        Args: { stable_slug: string };
+        Returns: readonly {
+          id: string;
+          title: string;
+          version_label: string;
+          template_storage_path: string;
+        }[];
+      };
       permanently_clear_horse_conversation: { Args: { target_horse_id: string }; Returns: undefined };
       move_herd_to_field: { Args: { target_field_id: string | null; target_herd_id: string }; Returns: undefined };
       move_horse_to_field: { Args: { target_field_id: string | null; target_horse_id: string }; Returns: undefined };

@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, type PDFPage, type PDFFont, rgb } from "npm:pdf-lib@1.17.1";
-import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { withSupabase } from "npm:@supabase/server@^1";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 interface GuestMinor {
   readonly fullName: string;
@@ -55,19 +56,6 @@ function jsonResponse(status: number, body: Readonly<Record<string, unknown>>): 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function configuredSecretKey(): string | null {
-  const secretKeysValue = Deno.env.get("SUPABASE_SECRET_KEYS");
-  if (secretKeysValue) {
-    try {
-      const parsedSecretKeys: unknown = JSON.parse(secretKeysValue);
-      if (isRecord(parsedSecretKeys) && typeof parsedSecretKeys.default === "string" && parsedSecretKeys.default.length > 0) {
-        return parsedSecretKeys.default;
-      }
-    } catch { /* Fall back to the legacy server credential. */ }
-  }
-  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? null;
 }
 
 function cleanedText(value: unknown, maximumLength: number): string {
@@ -331,22 +319,18 @@ async function sendEmailCopy(email: string, organizationName: string, confirmati
   }
 }
 
-Deno.serve(async (request: Request): Promise<Response> => {
+async function submitGuestWaiver(request: Request, administratorClient: SupabaseClient, rateLimitPepper: string): Promise<Response> {
   if (request.method === "OPTIONS") return new Response("ok", { headers: responseHeaders });
   if (request.method !== "POST") return jsonResponse(405, { error: "Method not allowed." });
 
   const contentLength = Number.parseInt(request.headers.get("content-length") ?? "0", 10);
   if (Number.isFinite(contentLength) && contentLength > maximumRequestBytes) return jsonResponse(413, { error: "The signature submission is too large." });
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const secretKey = configuredSecretKey();
-  if (!supabaseUrl || !secretKey) return jsonResponse(503, { error: "The waiver service is not configured." });
 
   const payload = parseWaiverRequest(await request.json().catch((): null => null));
   if (!payload) return jsonResponse(400, { error: "Review the required fields, signatures, and agreement before submitting." });
-  const administratorClient = createClient(supabaseUrl, secretKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
   try {
-    const identityHash = await sha256Hex(`${requestNetworkAddress(request)}|${secretKey}`);
+    const identityHash = await sha256Hex(`${requestNetworkAddress(request)}|${rateLimitPepper}`);
     if (!await enforceRateLimit(administratorClient, identityHash)) {
       return jsonResponse(429, { error: "Too many waiver attempts were made from this device. Please try again in one hour." });
     }
@@ -420,4 +404,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
     console.error(message);
     return jsonResponse(500, { error: message });
   }
-});
+}
+
+export default {
+  fetch: withSupabase({ auth: "none" }, async (request, context): Promise<Response> => {
+    const rateLimitPepper = Deno.env.get("SUPABASE_SECRET_KEYS") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!rateLimitPepper) return jsonResponse(503, { error: "The waiver service is not configured." });
+    return await submitGuestWaiver(request, context.supabaseAdmin, rateLimitPepper);
+  }),
+};
